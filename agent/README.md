@@ -36,8 +36,27 @@ Compute the three metric blocks (now / today / week) the device renders:
 python -m claude_portal --snapshot
 ```
 
-Outputs JSON with `now`, `today`, and `week` sections — the exact shape the
-publisher will send over MQTT in PR 4.
+Outputs JSON with `now`, `today`, and `week` sections — the same shape the
+publisher sends over MQTT.
+
+## Publish to Adafruit IO (PR 4)
+
+1. Copy `.env.example` to `.env` and fill in your Adafruit IO username + AIO key.
+2. Send one snapshot and exit (useful for testing):
+   ```bash
+   python -m claude_portal --publish-once
+   ```
+3. Or run the continuous loop (publishes every `PUBLISHER_INTERVAL` seconds,
+   default 30):
+   ```bash
+   python -m claude_portal --publish
+   ```
+
+To run it as a background service, see [`deploy/README.md`](deploy/README.md)
+for launchd (macOS) and systemd-user (Linux) templates.
+
+The published payload is a compact JSON document; the device subscribes to
+`{username}/feeds/claude-portal.snapshot` and renders it on the three screens.
 
 ## Tests
 

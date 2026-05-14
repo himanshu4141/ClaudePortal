@@ -1,0 +1,17 @@
+[Unit]
+Description=ClaudePortal usage agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust paths to match your install. Drop into ~/.config/systemd/user/
+# and run: systemctl --user enable --now claude-portal-agent.service
+EnvironmentFile=%h/.config/claude-portal/agent.env
+WorkingDirectory=%h/code/ClaudePortal/agent
+ExecStart=%h/code/ClaudePortal/agent/.venv/bin/python -m claude_portal --publish
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -7,7 +7,10 @@ name = "claude-portal-agent"
 version = "0.1.0"
 description = "Parse and publish Claude Code usage metrics to Adafruit IO."
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "paho-mqtt>=2.0",
+    "python-dotenv>=1.0",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]

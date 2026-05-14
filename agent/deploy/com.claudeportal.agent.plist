@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd template. Adjust paths and credentials, then:
+    cp com.claudeportal.agent.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.claudeportal.agent.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claudeportal.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOU/code/ClaudePortal/agent/.venv/bin/python</string>
+        <string>-m</string>
+        <string>claude_portal</string>
+        <string>--publish</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOU/code/ClaudePortal/agent</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>ADAFRUIT_IO_USERNAME</key>
+        <string>FILL_ME</string>
+        <key>ADAFRUIT_IO_KEY</key>
+        <string>FILL_ME</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/claude-portal-agent.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/claude-portal-agent.err.log</string>
+</dict>
+</plist>
