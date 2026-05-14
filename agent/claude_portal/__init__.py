@@ -1,3 +1,10 @@
+from .aggregator import (
+    NowMetrics,
+    Snapshot,
+    TodayMetrics,
+    WeekMetrics,
+    aggregate,
+)
 from .models import UsageEvent
 from .parser import (
     DEFAULT_CLAUDE_ROOT,
@@ -14,4 +21,9 @@ __all__ = [
     "discover_jsonl_files",
     "parse_all",
     "parse_file",
+    "NowMetrics",
+    "TodayMetrics",
+    "WeekMetrics",
+    "Snapshot",
+    "aggregate",
 ]
