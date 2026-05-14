@@ -1,11 +1,10 @@
-"""Regenerate mascot BMP sprites from the pixel-grid definitions below.
+"""Regenerate mascot BMP sprite sheets from the pixel-grid definitions below.
 
 Run with: python3 build_sprites.py
 
-Each grid uses '█' for lit copper pixels and any other character (typically
-'.' or '░') for off pixels. Eyes are drawn as off pixels (the LED matrix
-background shows through), so the mascot reads correctly without a third
-palette colour.
+Each grid uses '█' for lit copper pixels and any other character for off
+pixels. The hero and corner sheets are horizontal strips: frames stacked
+left-to-right so a single displayio.TileGrid can index between them.
 """
 from __future__ import annotations
 
@@ -33,6 +32,112 @@ HERO_IDLE = """
 ....██.██.██.██...
 """
 
+HERO_BLINK = """
+..██████████████..
+..██████████████..
+..██████████████..
+..██████████████..
+..██████████████..
+..██████████████..
+██████████████████
+██████████████████
+..██████████████..
+..██████████████..
+....██.██.██.██...
+....██.██.██.██...
+....██.██.██.██...
+"""
+
+HERO_TYPING = """
+..██████████████..
+..██████████████..
+..███░██████░███..
+..███░██████░███..
+..███░██████░███..
+..██████████████..
+██████████████████
+██████████████████
+..██████████████..
+..██████████████..
+..░░░░░░░░░░░░░░..
+....██.██.██.██...
+....██.██.██.██...
+"""
+
+HERO_HAPPY = """
+██..............██
+██..............██
+..██████████████..
+..██████████████..
+..███░██████░███..
+..███░██████░███..
+..███░██████░███..
+..██████████████..
+..██████████████..
+..██████████████..
+....██.██.██.██...
+....██.██.██.██...
+....██.██.██.██...
+"""
+
+HERO_THINK = """
+..............██..
+..............██..
+..██████████████..
+..██████████████..
+..███░██████░███..
+..███░██████░███..
+..███░██████░███..
+..██████████████..
+██████████████████
+██████████████████
+..██████████████..
+....██.██.██.██...
+....██.██.██.██...
+"""
+
+HERO_LOVE = """
+..██████████████..
+..██████████████..
+..██░░████░░██....
+..██░░████░░██....
+..██░░████░░██....
+..██████████████..
+██████████████████
+██████████████████
+..██████████████..
+..██████████████..
+....██.██.██.██...
+....██.██.██.██...
+....██.██.██.██...
+"""
+
+HERO_SWEAT = """
+..............██..
+..............██..
+..██████████████..
+..██████████████..
+..███░██████░███..
+..███░██████░███..
+..███░██████░███..
+..██████████████..
+██████████████████
+██████████████████
+..██████████████..
+..██████████████..
+....██.██.██.██...
+"""
+
+HERO_FRAMES = [
+    HERO_IDLE,
+    HERO_BLINK,
+    HERO_TYPING,
+    HERO_HAPPY,
+    HERO_THINK,
+    HERO_LOVE,
+    HERO_SWEAT,
+]
+
 CORNER_IDLE = """
 .███████.
 .███████.
@@ -43,6 +148,43 @@ CORNER_IDLE = """
 .█.█.█.█.
 """
 
+CORNER_BLINK = """
+.███████.
+.███████.
+.███████.
+█████████
+.███████.
+.███████.
+.█.█.█.█.
+"""
+
+CORNER_LOOK_L = """
+.███████.
+.███████.
+█░███░███
+█████████
+.███████.
+.███████.
+.█.█.█.█.
+"""
+
+CORNER_LOOK_R = """
+.███████.
+.███████.
+███░███░█
+█████████
+.███████.
+.███████.
+.█.█.█.█.
+"""
+
+CORNER_FRAMES = [
+    CORNER_IDLE,
+    CORNER_BLINK,
+    CORNER_LOOK_L,
+    CORNER_LOOK_R,
+]
+
 
 def parse_grid(text: str) -> list[list[int]]:
     rows = [row for row in text.split("\n") if row]
@@ -52,6 +194,17 @@ def parse_grid(text: str) -> list[list[int]]:
         padded = row.ljust(width, ".")
         grid.append([1 if ch == "█" else 0 for ch in padded])
     return grid
+
+
+def stack_strip(grids: list[list[list[int]]]) -> list[list[int]]:
+    h = len(grids[0])
+    w = len(grids[0][0])
+    combined = [[0] * (w * len(grids)) for _ in range(h)]
+    for i, grid in enumerate(grids):
+        for r in range(h):
+            for c in range(w):
+                combined[r][i * w + c] = grid[r][c]
+    return combined
 
 
 def write_bmp_1bpp(path: Path, grid: list[list[int]], fg=COPPER, bg=OFF) -> None:
@@ -105,8 +258,10 @@ def write_bmp_1bpp(path: Path, grid: list[list[int]], fg=COPPER, bg=OFF) -> None
 
 
 def main() -> None:
-    write_bmp_1bpp(HERE / "mascot_hero.bmp", parse_grid(HERO_IDLE))
-    write_bmp_1bpp(HERE / "mascot_corner.bmp", parse_grid(CORNER_IDLE))
+    hero_grids = [parse_grid(g) for g in HERO_FRAMES]
+    corner_grids = [parse_grid(g) for g in CORNER_FRAMES]
+    write_bmp_1bpp(HERE / "mascot_hero.bmp", stack_strip(hero_grids))
+    write_bmp_1bpp(HERE / "mascot_corner.bmp", stack_strip(corner_grids))
 
 
 if __name__ == "__main__":

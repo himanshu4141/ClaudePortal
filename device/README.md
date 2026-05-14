@@ -26,7 +26,7 @@ with a pixel-art Claude Code mascot.
    ```
 5. Copy the helper modules and the sprite directory:
    ```bash
-   cp display.py screens.py formatting.py mascot.py /Volumes/CIRCUITPY/
+   cp display.py screens.py formatting.py mascot.py moods.py /Volumes/CIRCUITPY/
    cp -r sprites /Volumes/CIRCUITPY/sprites
    ```
    The `sprites/` folder ships the pre-built BMPs. To re-generate them after
@@ -37,11 +37,24 @@ with a pixel-art Claude Code mascot.
    screen /dev/tty.usbmodem* 115200
    ```
 
-## What you'll see (PR 7)
+## What you'll see (PR 8)
 
-The Claude Code mascot now appears on every screen — the full 18×13 hero
-sprite on the left half of NOW, and the 9×7 corner sprite in the top-right of
-TODAY and WEEK. Both render in Claude copper (`#D97757`).
+The mascot is now alive. The mood controller picks a hero frame each tick
+based on the latest snapshot:
+
+| Snapshot signal | Hero shows |
+|---|---|
+| No data yet | (waiting splash) |
+| `now.active=True` and `now.rate>0` | TYPING |
+| `now.active=True` and no rate | THINK |
+| `today.window_pct >= 85` | SWEAT |
+| Crossed a token milestone (1M / 5M / 10M today) | HAPPY for 5 s |
+| Otherwise | IDLE |
+
+The hero blinks randomly every 3–6 seconds. When the hero blinks, the
+corner mascot blinks too; while TYPING or THINKING is active, the corner's
+eyes scan left or right. `LOVE` is wired into the frame table for future use
+on streak days.
 
 Until the first MQTT message arrives, the panel shows a `claude / portal`
 waiting splash. Once the agent publishes a snapshot, the board cycles three
