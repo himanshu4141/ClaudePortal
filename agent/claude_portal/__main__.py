@@ -6,16 +6,28 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from .aggregator import aggregate
 from .parser import DEFAULT_CLAUDE_ROOT, parse_all
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Parse Claude Code session JSONL files and emit usage events as JSON.",
+        description="Parse Claude Code session JSONL files and emit usage data as JSON.",
     )
     parser.add_argument("--root", type=Path, default=DEFAULT_CLAUDE_ROOT)
+    parser.add_argument(
+        "--snapshot",
+        action="store_true",
+        help="Emit one aggregated snapshot instead of per-event records.",
+    )
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args(argv)
+
+    if args.snapshot:
+        snapshot = aggregate(parse_all(args.root))
+        json.dump(asdict(snapshot), sys.stdout, indent=2, default=str)
+        sys.stdout.write("\n")
+        return 0
 
     count = 0
     for event in parse_all(args.root):

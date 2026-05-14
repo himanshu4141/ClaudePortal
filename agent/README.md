@@ -28,6 +28,17 @@ Point at a different root for testing:
 python -m claude_portal --root /path/to/fake/claude/projects
 ```
 
+## Aggregate to a snapshot (PR 3)
+
+Compute the three metric blocks (now / today / week) the device renders:
+
+```bash
+python -m claude_portal --snapshot
+```
+
+Outputs JSON with `now`, `today`, and `week` sections — the exact shape the
+publisher will send over MQTT in PR 4.
+
 ## Tests
 
 ```bash
