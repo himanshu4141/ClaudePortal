@@ -11,7 +11,8 @@ with a pixel-art Claude Code mascot.
    [`lib_requirements.txt`](lib_requirements.txt). With
    [`circup`](https://github.com/adafruit/circup):
    ```bash
-   circup install adafruit_minimqtt adafruit_connection_manager
+   circup install adafruit_minimqtt adafruit_connection_manager \
+                  adafruit_matrixportal adafruit_display_text
    ```
 3. Copy `secrets.py.example` to the board as `secrets.py` and fill in your
    Wi-Fi credentials and Adafruit IO username + AIO key:
@@ -23,28 +24,33 @@ with a pixel-art Claude Code mascot.
    ```bash
    cp code.py /Volumes/CIRCUITPY/code.py
    ```
-5. Open a serial console to watch the board (replace the path with your
+5. Also copy the helper modules:
+   ```bash
+   cp display.py screens.py formatting.py /Volumes/CIRCUITPY/
+   ```
+6. Open a serial console to watch the board (replace the path with your
    actual device — `ls /dev/tty.usbmodem*` on macOS):
    ```bash
    screen /dev/tty.usbmodem* 115200
    ```
 
-## What you'll see (PR 5)
+## What you'll see (PR 6)
 
-This PR is just the network bootstrap. Expected serial output:
+Until the first MQTT message arrives, the panel shows a `claude / portal`
+waiting splash. Once the agent publishes a snapshot, the board cycles three
+screens every 5 seconds:
 
-```
-wifi: connecting to MyNetwork
-wifi: ip=192.168.1.42
-mqtt: connected rc=0
-mqtt: subscribed to your-username/feeds/claude-portal.snapshot
-mqtt: msg topic=your-username/feeds/claude-portal.snapshot bytes=247
-  NOW   active=True model=claude-sonnet-4-6 tokens=42108 rate=1234.5/min
-  TODAY tokens=1240000 cost=$4.82 window=62.0%
-  WEEK  total=7800000 opus=31.0% sonnet=69.0%
-```
+- **NOW** — short model name (e.g. `SONNET`) in amber, current session tokens
+  in copper, session duration in dim cream, with a `*` prefix when the session
+  is active
+- **TODAY** — token total in copper, cost estimate in pink, a progress bar
+  that shades amber → copper → pink as the 5-hour window fills, and the
+  percentage in white
+- **WEEK** — week-total tokens in copper, a 7-bar sparkline (one per day), a
+  stacked Opus/Sonnet bar, and the model split labelled `O31 S69`
 
-The LED matrix itself stays dark until PR 6.
+The serial console still prints the same one-line summaries from PR 5 for
+sanity-checking against the panel.
 
 If `code.py` raises, the top-level retry loop catches it, prints the error,
 and reconnects with exponential backoff (5s → 10s → … → 60s).

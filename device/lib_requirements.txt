@@ -2,13 +2,16 @@
 # Tested with CircuitPython 9.x on the Adafruit Matrix Portal M4.
 #
 # Install with circup:
-#   circup install adafruit_minimqtt adafruit_connection_manager
+#   circup install adafruit_minimqtt adafruit_connection_manager \
+#                  adafruit_matrixportal adafruit_display_text
 #
 # Or copy these from the official CP9 library bundle:
 #   https://circuitpython.org/libraries
 
 adafruit_minimqtt/
 adafruit_connection_manager.mpy
+adafruit_matrixportal/
+adafruit_display_text/
 
 # Built-in to CircuitPython 9.x core (no separate install needed):
-#   wifi, socketpool, ssl, json, time
+#   wifi, socketpool, ssl, displayio, terminalio, json, time
