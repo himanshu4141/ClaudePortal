@@ -9,9 +9,19 @@ from formatting import (
     format_tokens,
     short_model,
 )
+from mascot import (
+    CORNER_HEIGHT,
+    CORNER_WIDTH,
+    HERO_HEIGHT,
+    make_corner,
+    make_hero,
+)
 
 WIDTH = 64
 HEIGHT = 32
+CORNER_X = WIDTH - CORNER_WIDTH
+HERO_X = 0
+HERO_Y = (HEIGHT - HERO_HEIGHT) // 2  # vertical centre
 
 
 def make_waiting_screen():
@@ -29,15 +39,20 @@ def make_now_screen(snapshot):
     tokens = now.get("tokens") or 0
     duration_min = now.get("duration_min") or 0
 
+    group.append(make_hero(x=HERO_X, y=HERO_Y))
+
+    text_x = HERO_X + 20
     title_color = PALETTE["amber"] if active else PALETTE["cream"]
-    group.append(label.Label(terminalio.FONT, text=model, color=title_color, x=2, y=4))
+    group.append(label.Label(terminalio.FONT, text=model, color=title_color, x=text_x, y=5))
     group.append(
-        label.Label(terminalio.FONT, text=format_tokens(tokens), color=PALETTE["copper"], x=2, y=16)
+        label.Label(
+            terminalio.FONT, text=format_tokens(tokens), color=PALETTE["copper"], x=text_x, y=17
+        )
     )
     sub_text = format_duration(duration_min)
     if active:
         sub_text = "* " + sub_text if sub_text else "*"
-    group.append(label.Label(terminalio.FONT, text=sub_text, color=PALETTE["cream"], x=2, y=27))
+    group.append(label.Label(terminalio.FONT, text=sub_text, color=PALETTE["cream"], x=text_x, y=28))
     return group
 
 
@@ -49,6 +64,7 @@ def make_today_screen(snapshot):
     pct = today.get("window_pct") or 0
 
     group.append(label.Label(terminalio.FONT, text="TODAY", color=PALETTE["cream"], x=2, y=4))
+    group.append(make_corner(x=CORNER_X, y=0))
     group.append(
         label.Label(terminalio.FONT, text=format_tokens(tokens), color=PALETTE["copper"], x=2, y=16)
     )
@@ -82,6 +98,7 @@ def make_week_screen(snapshot):
     group.append(
         label.Label(terminalio.FONT, text=format_tokens(total), color=PALETTE["copper"], x=18, y=4)
     )
+    group.append(make_corner(x=CORNER_X, y=0))
 
     spark = _sparkline(days, x=2, y=10, width=WIDTH - 4, height=10)
     for tile in spark:

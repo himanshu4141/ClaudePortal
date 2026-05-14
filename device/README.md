@@ -24,17 +24,24 @@ with a pixel-art Claude Code mascot.
    ```bash
    cp code.py /Volumes/CIRCUITPY/code.py
    ```
-5. Also copy the helper modules:
+5. Copy the helper modules and the sprite directory:
    ```bash
-   cp display.py screens.py formatting.py /Volumes/CIRCUITPY/
+   cp display.py screens.py formatting.py mascot.py /Volumes/CIRCUITPY/
+   cp -r sprites /Volumes/CIRCUITPY/sprites
    ```
+   The `sprites/` folder ships the pre-built BMPs. To re-generate them after
+   editing the pixel grids, run `python3 sprites/build_sprites.py`.
 6. Open a serial console to watch the board (replace the path with your
    actual device — `ls /dev/tty.usbmodem*` on macOS):
    ```bash
    screen /dev/tty.usbmodem* 115200
    ```
 
-## What you'll see (PR 6)
+## What you'll see (PR 7)
+
+The Claude Code mascot now appears on every screen — the full 18×13 hero
+sprite on the left half of NOW, and the 9×7 corner sprite in the top-right of
+TODAY and WEEK. Both render in Claude copper (`#D97757`).
 
 Until the first MQTT message arrives, the panel shows a `claude / portal`
 waiting splash. Once the agent publishes a snapshot, the board cycles three
