@@ -1,0 +1,9 @@
+# Install with: pip install -r requirements.txt
+# Or for development: pip install -e .[dev]
+
+# Runtime deps: none yet (PR 2 uses stdlib only)
+# Adafruit IO + MQTT deps are added in PR 4.
+
+# Dev / test
+pytest>=8.0
+ruff>=0.6
