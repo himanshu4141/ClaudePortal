@@ -1,0 +1,22 @@
+{
+  "ts": "2026-05-15T16:30:00+00:00",
+  "now": {
+    "active": true,
+    "model": "claude-opus-4-7",
+    "tokens": 988200,
+    "duration_min": 247,
+    "rate": 2410.0
+  },
+  "today": {
+    "tokens": 4_180_000,
+    "cost": 31.48,
+    "window_pct": 92.5
+  },
+  "week": {
+    "total": 22_800_000,
+    "days": [800000, 1600000, 2200000, 3100000, 4400000, 6200000, 4500000],
+    "labels": ["F", "S", "S", "M", "T", "W", "T"],
+    "opus_pct": 68.0,
+    "sonnet_pct": 32.0
+  }
+}
