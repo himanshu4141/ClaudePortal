@@ -6,6 +6,13 @@ import socketpool
 import wifi
 import adafruit_minimqtt.adafruit_minimqtt as MQTT
 
+from display import ScreenRotator, make_display
+from screens import (
+    make_now_screen,
+    make_today_screen,
+    make_waiting_screen,
+    make_week_screen,
+)
 from secrets import secrets
 
 BROKER = "io.adafruit.com"
@@ -13,6 +20,13 @@ PORT = 8883
 FEED = "{}/feeds/claude-portal.snapshot".format(secrets["aio_username"])
 RETRY_BASE_SECONDS = 5
 RETRY_MAX_SECONDS = 60
+
+display = make_display()
+rotator = ScreenRotator(
+    display,
+    screen_factories=[make_now_screen, make_today_screen, make_week_screen],
+    waiting_factory=make_waiting_screen,
+)
 
 
 def connect_wifi():
@@ -56,6 +70,7 @@ def _on_message(_client, topic, message):
         print("mqtt: json parse failed: {}".format(exc))
         return
     summarize(snapshot)
+    rotator.update_snapshot(snapshot)
 
 
 def summarize(snapshot):
@@ -83,7 +98,8 @@ def run():
             mqtt_client.connect()
             retry_delay = RETRY_BASE_SECONDS
             while True:
-                mqtt_client.loop(timeout=1)
+                mqtt_client.loop(timeout=0.5)
+                rotator.tick()
         except Exception as exc:  # noqa: BLE001 - top-level guard so the board never wedges
             print("loop: crashed type={} err={}".format(type(exc).__name__, exc))
             print("loop: retrying in {}s".format(retry_delay))
