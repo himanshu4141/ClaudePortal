@@ -37,3 +37,9 @@ Thumbs.db
 
 # CircuitPython build artifacts
 device/CIRCUITPY/
+
+# Emulator generated output
+emulator/tests/out/
+
+# Worktrees created by EnterWorktree
+.claude/worktrees/

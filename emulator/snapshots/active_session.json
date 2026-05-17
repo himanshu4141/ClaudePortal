@@ -1,0 +1,22 @@
+{
+  "ts": "2026-05-15T12:00:00+00:00",
+  "now": {
+    "active": true,
+    "model": "claude-sonnet-4-6",
+    "tokens": 42108,
+    "duration_min": 83,
+    "rate": 1234.5
+  },
+  "today": {
+    "tokens": 1240000,
+    "cost": 4.82,
+    "window_pct": 62.0
+  },
+  "week": {
+    "total": 7800000,
+    "days": [100000, 200000, 150000, 300000, 800000, 600000, 400000],
+    "labels": ["F", "S", "S", "M", "T", "W", "T"],
+    "opus_pct": 31.0,
+    "sonnet_pct": 69.0
+  }
+}
