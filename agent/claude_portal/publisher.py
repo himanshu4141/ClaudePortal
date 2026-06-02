@@ -5,8 +5,10 @@ import logging
 import os
 import ssl
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import paho.mqtt.client as mqtt
 
@@ -30,6 +32,17 @@ class PublisherConfig:
     host: str = ADAFRUIT_IO_HOST
     port: int = ADAFRUIT_IO_PORT
     interval: int = DEFAULT_INTERVAL_SECONDS
+    week_reset_weekday: int = 4    # Friday (Mon=0 … Fri=4 … Sun=6)
+    week_reset_hour: int = 0       # hour-of-day in week_reset_tz
+    week_reset_tz: str = ""        # IANA tz name; empty = system local tz
+    week_limit_tokens: int = 0     # 0 = not configured
+
+    @property
+    def week_reset_tzinfo(self):
+        if not self.week_reset_tz:
+            return None
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(self.week_reset_tz)
 
     @classmethod
     def from_env(cls) -> PublisherConfig:
@@ -45,31 +58,38 @@ class PublisherConfig:
             key=key,
             feed=os.environ.get("PUBLISHER_FEED", DEFAULT_FEED),
             interval=int(os.environ.get("PUBLISHER_INTERVAL", DEFAULT_INTERVAL_SECONDS)),
+            week_reset_weekday=int(os.environ.get("WEEK_RESET_WEEKDAY", "4")),
+            week_reset_hour=int(os.environ.get("WEEK_RESET_HOUR", "0")),
+            week_reset_tz=os.environ.get("WEEK_RESET_TZ", ""),
+            week_limit_tokens=int(os.environ.get("WEEK_LIMIT_TOKENS", "0")),
         )
 
 
+def _minutes_until(dt: datetime | None, now: datetime) -> int | None:
+    if dt is None:
+        return None
+    delta = dt - now
+    return max(0, int(delta.total_seconds() / 60))
+
+
 def snapshot_to_payload(snapshot: Snapshot) -> str:
+    now_ts = snapshot.generated_at
     return json.dumps(
         {
-            "ts": snapshot.generated_at.isoformat(),
+            "ts": now_ts.isoformat(),
             "now": {
                 "active": snapshot.now.active,
                 "model": snapshot.now.model,
-                "tokens": snapshot.now.session_tokens,
-                "duration_min": snapshot.now.session_duration_minutes,
                 "rate": snapshot.now.tokens_per_minute,
             },
-            "today": {
-                "tokens": snapshot.today.total_tokens,
-                "cost": snapshot.today.estimated_cost_usd,
+            "session": {
                 "window_pct": snapshot.today.window_pct,
+                "resets_in_min": _minutes_until(snapshot.today.window_resets_at, now_ts),
             },
             "week": {
+                "window_pct": snapshot.week.window_pct,
+                "resets_in_min": _minutes_until(snapshot.week.resets_at, now_ts),
                 "total": snapshot.week.total_tokens,
-                "days": snapshot.week.per_day_tokens,
-                "labels": snapshot.week.per_day_labels,
-                "opus_pct": snapshot.week.opus_pct,
-                "sonnet_pct": snapshot.week.sonnet_pct,
             },
         },
         separators=(",", ":"),
@@ -130,7 +150,13 @@ def run_loop(
     try:
         i = 0
         while iterations is None or i < iterations:
-            payload = snapshot_to_payload(aggregate(parse_all(root)))
+            payload = snapshot_to_payload(aggregate(
+                parse_all(root),
+                week_reset_weekday=config.week_reset_weekday,
+                week_reset_hour=config.week_reset_hour,
+                week_reset_tz=config.week_reset_tzinfo,
+                week_limit_tokens=config.week_limit_tokens,
+            ))
             pub.publish(payload)
             logger.info("published %d bytes to %s", len(payload), pub.topic)
             i += 1

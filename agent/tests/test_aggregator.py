@@ -6,7 +6,7 @@ from claude_portal.aggregator import aggregate
 from claude_portal.models import UsageEvent
 
 UTC = timezone.utc
-NOW = datetime(2026, 5, 14, 12, 0, tzinfo=UTC)  # Thursday noon
+NOW = datetime(2026, 5, 14, 12, 0, tzinfo=UTC)  # Thursday noon UTC
 
 
 def make_event(
@@ -38,7 +38,8 @@ def test_aggregate_empty_returns_zero_snapshot():
     assert snap.today.total_tokens == 0
     assert snap.today.window_pct == 0.0
     assert snap.week.total_tokens == 0
-    assert snap.week.per_day_tokens == [0] * 7
+    assert snap.week.window_pct == 0.0
+    assert snap.week.resets_at is not None
 
 
 def test_now_active_when_latest_within_threshold():
@@ -129,23 +130,24 @@ def test_today_cost_estimate_opus():
     assert abs(snap.today.estimated_cost_usd - 90.00) < 0.01  # 15 + 75
 
 
-def test_week_per_day_breakdown():
+# NOW = Thursday 2026-05-14 12:00 UTC, default week resets Friday midnight UTC.
+# Most recent Friday midnight UTC = 2026-05-08 00:00 UTC (6 days before Thursday noon).
+# Next Friday midnight UTC = 2026-05-15 00:00 UTC.
+
+def test_week_counts_events_since_last_reset():
     events = [
-        make_event(NOW - timedelta(days=6, hours=2), input_tokens=100),
-        make_event(NOW - timedelta(days=2, hours=1), input_tokens=200),
-        make_event(NOW - timedelta(hours=1), input_tokens=300),
+        make_event(NOW - timedelta(days=6, hours=2), input_tokens=100),  # May 8 ~10:00 → in week
+        make_event(NOW - timedelta(days=2, hours=1), input_tokens=200),  # May 12 ~11:00 → in week
+        make_event(NOW - timedelta(hours=1), input_tokens=300),          # May 14 ~11:00 → in week
     ]
     snap = aggregate(events, now=NOW, tz=UTC)
-    assert snap.week.per_day_tokens[0] == 100
-    assert snap.week.per_day_tokens[4] == 200
-    assert snap.week.per_day_tokens[6] == 300
     assert snap.week.total_tokens == 600
 
 
-def test_week_drops_events_older_than_seven_days():
+def test_week_drops_events_before_last_reset():
     events = [
-        make_event(NOW - timedelta(days=8), input_tokens=9999),
-        make_event(NOW - timedelta(hours=1), input_tokens=100),
+        make_event(NOW - timedelta(days=8), input_tokens=9999),  # May 6 → before May 8 reset
+        make_event(NOW - timedelta(hours=1), input_tokens=100),  # May 14 → in week
     ]
     snap = aggregate(events, now=NOW, tz=UTC)
     assert snap.week.total_tokens == 100
@@ -163,11 +165,44 @@ def test_week_model_split_opus_vs_sonnet():
     assert snap.week.sonnet_pct == 70.0
 
 
-def test_week_labels_are_seven_day_initials_ending_today():
+def test_week_resets_at_is_next_friday_midnight_utc():
     snap = aggregate([], now=NOW, tz=UTC)
-    assert len(snap.week.per_day_labels) == 7
-    # Thursday is "T", so labels end with "T" for 2026-05-14
-    assert snap.week.per_day_labels[-1] == "T"
+    expected = datetime(2026, 5, 15, 0, 0, tzinfo=UTC)
+    assert snap.week.resets_at == expected
+
+
+def test_week_window_pct_against_configured_limit():
+    events = [make_event(NOW - timedelta(hours=1), input_tokens=1_400_000)]
+    snap = aggregate(events, now=NOW, tz=UTC, week_limit_tokens=10_000_000)
+    assert snap.week.window_pct == 14.0
+
+
+def test_week_window_pct_zero_when_limit_not_configured():
+    events = [make_event(NOW - timedelta(hours=1), input_tokens=1_000_000)]
+    snap = aggregate(events, now=NOW, tz=UTC, week_limit_tokens=0)
+    assert snap.week.window_pct == 0.0
+
+
+def test_week_respects_custom_reset_hour_and_tz():
+    from zoneinfo import ZoneInfo
+    dublin = ZoneInfo("Europe/Dublin")
+    # NOW = 2026-05-14 12:00 UTC = 13:00 Dublin (IST = UTC+1 in summer)
+    # Week resets Friday 9AM Dublin. Last reset: Fri May 8 09:00 Dublin = 08:00 UTC.
+    # Next reset: Fri May 15 09:00 Dublin = 08:00 UTC.
+    snap = aggregate([], now=NOW, tz=UTC, week_reset_weekday=4, week_reset_hour=9, week_reset_tz=dublin)
+    expected = datetime(2026, 5, 15, 8, 0, tzinfo=UTC)
+    assert snap.week.resets_at == expected
+
+
+def test_week_reset_on_friday_before_reset_hour_stays_in_previous_week():
+    from zoneinfo import ZoneInfo
+    dublin = ZoneInfo("Europe/Dublin")
+    # Fri May 15 08:30 Dublin (07:30 UTC) — reset hour is 9AM, hasn't fired yet
+    before_reset = datetime(2026, 5, 15, 7, 30, tzinfo=UTC)
+    snap = aggregate([], now=before_reset, tz=UTC, week_reset_weekday=4, week_reset_hour=9, week_reset_tz=dublin)
+    # Still in previous week; next reset is still May 15 09:00 Dublin = 08:00 UTC
+    expected = datetime(2026, 5, 15, 8, 0, tzinfo=UTC)
+    assert snap.week.resets_at == expected
 
 
 def test_window_resets_at_is_oldest_in_window_plus_5h():

@@ -10,7 +10,7 @@ import adafruit_minimqtt.adafruit_minimqtt as MQTT
 
 from display import ScreenRotator, make_display
 from moods import MoodController
-from screens import NowScreen, TodayScreen, WaitingScreen, WeekScreen
+from screens import SessionScreen, WaitingScreen, WeekLimitScreen
 from secrets import secrets
 
 BROKER = "io.adafruit.com"
@@ -27,7 +27,7 @@ _spi = busio.SPI(board.SCK, board.MOSI, board.MISO)
 _esp = adafruit_esp32spi.ESP_SPIcontrol(_spi, _esp32_cs, _esp32_ready, _esp32_reset)
 
 display = make_display()
-screens = [NowScreen(), TodayScreen(), WeekScreen()]
+screens = [SessionScreen(), WeekLimitScreen()]
 rotator = ScreenRotator(display, screens, waiting_screen=WaitingScreen())
 mood = MoodController(rotator.current_index, screens)
 
@@ -83,16 +83,16 @@ def _on_message(_client, topic, message):
 
 def summarize(snapshot):
     now = snapshot.get("now") or {}
-    today = snapshot.get("today") or {}
+    sess = snapshot.get("session") or {}
     week = snapshot.get("week") or {}
-    print("  NOW   active={} model={} tokens={} rate={}/min".format(
-        now.get("active"), now.get("model"), now.get("tokens"), now.get("rate"),
+    print("  NOW     active={} model={} rate={}/min".format(
+        now.get("active"), now.get("model"), now.get("rate"),
     ))
-    print("  TODAY tokens={} cost=${} window={}%".format(
-        today.get("tokens"), today.get("cost"), today.get("window_pct"),
+    print("  SESSION pct={}% resets_in={}min".format(
+        sess.get("window_pct"), sess.get("resets_in_min"),
     ))
-    print("  WEEK  total={} opus={}% sonnet={}%".format(
-        week.get("total"), week.get("opus_pct"), week.get("sonnet_pct"),
+    print("  WEEK    pct={}% resets_in={}min total={}".format(
+        week.get("window_pct"), week.get("resets_in_min"), week.get("total"),
     ))
 
 

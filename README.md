@@ -43,10 +43,15 @@ creation, CircuitPython flashing, and library installation.
 
 ## Status
 
-Functional. Hardware is running on CircuitPython 9.2.x with `adafruit_esp32spi`
-for Wi-Fi (native `wifi`/`socketpool` are not available on the Matrix Portal M4
-in CP 9.x). MQTT connects to Adafruit IO on port 1883 (non-SSL; the ESP32
-co-processor's SSL stack is unreliable at this firmware version).
+Functional. Two rotating screens: **SESS** (5-hour window % + reset countdown)
+and **WEEK** (weekly % + next Friday countdown). The pixel-art mascot reacts
+to usage level — sweats when the session window is near full, types or thinks
+while Claude is active, blinks randomly otherwise.
+
+Hardware runs CircuitPython 9.2.x with `adafruit_esp32spi` for Wi-Fi (native
+`wifi`/`socketpool` are not available on the Matrix Portal M4 in CP 9.x).
+MQTT connects to Adafruit IO on port 1883 (non-SSL; the ESP32 co-processor's
+TLS stack is unreliable at this firmware version).
 
 ## License
 

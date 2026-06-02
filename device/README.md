@@ -39,37 +39,31 @@ with a pixel-art Claude Code mascot.
    screen /dev/tty.usbmodem* 115200
    ```
 
-## What you'll see (PR 8)
+## What you'll see
 
-The mascot is now alive. The mood controller picks a hero frame each tick
-based on the latest snapshot:
+Until the first MQTT message arrives the panel shows a `claude / portal`
+waiting splash. Once the agent publishes a snapshot, the board rotates two
+screens every 5 seconds:
 
-| Snapshot signal | Hero shows |
+- **SESS** — 5-hour session window: % used as a colour-coded bar (amber →
+  copper → pink as it fills), and the countdown until the window resets
+  (e.g. `4h 21m`)
+- **WEEK** — weekly limit: % used and time until the next configured reset
+  (e.g. `6d 14h` or `2h 30m` on reset day)
+
+The hero mascot reacts to the latest snapshot each tick:
+
+| Signal | Hero shows |
 |---|---|
 | No data yet | (waiting splash) |
 | `now.active=True` and `now.rate>0` | TYPING |
 | `now.active=True` and no rate | THINK |
-| `today.window_pct >= 85` | SWEAT |
-| Crossed a token milestone (1M / 5M / 10M today) | HAPPY for 5 s |
+| `session.window_pct >= 85` | SWEAT |
+| Crossed a weekly token milestone (1M / 5M / 10M) | HAPPY for 5 s |
 | Otherwise | IDLE |
 
-The hero blinks randomly every 3–6 seconds. When the hero blinks, the
-corner mascot blinks too; while TYPING or THINKING is active, the corner's
-eyes scan left or right. `LOVE` is wired into the frame table for future use
-on streak days.
-
-Until the first MQTT message arrives, the panel shows a `claude / portal`
-waiting splash. Once the agent publishes a snapshot, the board cycles three
-screens every 5 seconds:
-
-- **NOW** — short model name (e.g. `SONNET`) in amber, current session tokens
-  in copper, session duration in dim cream, with a `*` prefix when the session
-  is active
-- **TODAY** — token total in copper, cost estimate in pink, a progress bar
-  that shades amber → copper → pink as the 5-hour window fills, and the
-  percentage in white
-- **WEEK** — week-total tokens in copper, a 7-bar sparkline (one per day), a
-  stacked Opus/Sonnet bar, and the model split labelled `O31 S69`
+The hero blinks randomly every 3–6 seconds; the corner mascot mirrors the
+blink and tracks eye direction while TYPING or THINKING.
 
 The serial console still prints the same one-line summaries from PR 5 for
 sanity-checking against the panel.

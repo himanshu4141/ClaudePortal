@@ -10,7 +10,6 @@ ACTIVE_THRESHOLD = timedelta(minutes=5)
 WINDOW_DURATION = timedelta(hours=5)
 RATE_WINDOW = timedelta(minutes=5)
 WEEK_DAYS = 7
-WEEK_START_WEEKDAY = 4  # Friday (Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6)
 DEFAULT_WINDOW_LIMIT_TOKENS = 20_000_000
 
 # USD per 1M tokens. Approximate Pro/Max pricing for cost-equivalent display.
@@ -44,12 +43,12 @@ class TodayMetrics:
 @dataclass(frozen=True, slots=True)
 class WeekMetrics:
     total_tokens: int
-    per_day_tokens: list[int]
-    per_day_labels: list[str]
     opus_tokens: int
     sonnet_tokens: int
     opus_pct: float
     sonnet_pct: float
+    window_pct: float     # % of weekly limit used; 0.0 if limit not configured
+    resets_at: datetime   # next week reset (UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,16 +64,25 @@ def aggregate(
     now: datetime | None = None,
     window_limit_tokens: int = DEFAULT_WINDOW_LIMIT_TOKENS,
     tz: tzinfo | None = None,
+    week_reset_weekday: int = 4,       # Friday (Mon=0 … Fri=4 … Sun=6)
+    week_reset_hour: int = 0,          # hour-of-day in week_reset_tz
+    week_reset_tz: tzinfo | None = None,
+    week_limit_tokens: int = 0,        # 0 = not configured → window_pct stays 0.0
 ) -> Snapshot:
     now = now or datetime.now(timezone.utc)
     if tz is None:
         tz = now.astimezone().tzinfo or timezone.utc
+    if week_reset_tz is None:
+        week_reset_tz = tz
     events_list = sorted(events, key=lambda e: e.timestamp)
     return Snapshot(
         generated_at=now,
         now=_compute_now(events_list, now),
         today=_compute_today(events_list, now, tz, window_limit_tokens),
-        week=_compute_week(events_list, now, tz),
+        week=_compute_week(
+            events_list, now,
+            week_limit_tokens, week_reset_weekday, week_reset_hour, week_reset_tz,
+        ),
     )
 
 
@@ -136,25 +144,33 @@ def _compute_today(
     )
 
 
-def _compute_week(events: list[UsageEvent], now: datetime, tz: tzinfo) -> WeekMetrics:
-    today_local = now.astimezone(tz).date()
-    days_since_reset = (today_local.weekday() - WEEK_START_WEEKDAY) % 7
-    week_start_date = today_local - timedelta(days=days_since_reset)
-    days = [week_start_date + timedelta(days=i) for i in range(WEEK_DAYS)]
-    labels = [d.strftime("%a")[0] for d in days]
-    week_start = datetime.combine(week_start_date, datetime.min.time(), tzinfo=tz)
+def _compute_week(
+    events: list[UsageEvent],
+    now: datetime,
+    week_limit_tokens: int,
+    week_reset_weekday: int,
+    week_reset_hour: int,
+    week_reset_tz: tzinfo,
+) -> WeekMetrics:
+    # Find the most recent reset moment at or before now.
+    now_in_rtz = now.astimezone(week_reset_tz)
+    days_since = (now_in_rtz.weekday() - week_reset_weekday) % 7
+    last_reset = now_in_rtz.replace(
+        hour=week_reset_hour, minute=0, second=0, microsecond=0
+    ) - timedelta(days=days_since)
+    if last_reset > now_in_rtz:
+        last_reset -= timedelta(days=7)
 
-    per_day = [0] * WEEK_DAYS
+    week_start_utc = last_reset.astimezone(timezone.utc)
+    next_reset_utc = (last_reset + timedelta(days=WEEK_DAYS)).astimezone(timezone.utc)
+
+    total = 0
     opus = 0
     sonnet = 0
     for e in events:
-        local = e.timestamp.astimezone(tz)
-        if local < week_start:
+        if e.timestamp < week_start_utc:
             continue
-        idx = (local.date() - days[0]).days
-        if not 0 <= idx < WEEK_DAYS:
-            continue
-        per_day[idx] += e.total_tokens
+        total += e.total_tokens
         family = _model_family(e.model)
         if family == "opus":
             opus += e.total_tokens
@@ -164,15 +180,17 @@ def _compute_week(events: list[UsageEvent], now: datetime, tz: tzinfo) -> WeekMe
     coded = opus + sonnet
     opus_pct = round(100.0 * opus / coded, 1) if coded else 0.0
     sonnet_pct = round(100.0 * sonnet / coded, 1) if coded else 0.0
+    window_pct = round(100.0 * total / week_limit_tokens, 1) if week_limit_tokens else 0.0
+    window_pct = min(window_pct, 100.0)
 
     return WeekMetrics(
-        total_tokens=sum(per_day),
-        per_day_tokens=per_day,
-        per_day_labels=labels,
+        total_tokens=total,
         opus_tokens=opus,
         sonnet_tokens=sonnet,
         opus_pct=opus_pct,
         sonnet_pct=sonnet_pct,
+        window_pct=window_pct,
+        resets_at=next_reset_utc,
     )
 
 
