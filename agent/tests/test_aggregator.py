@@ -144,6 +144,25 @@ def test_session_scoped_to_current_session_id():
     assert snap.session.window_pct == round(500_000 / 2_766_000 * 100, 1)
 
 
+def test_session_anchors_to_last_synthetic_to_real_transition():
+    # Session ran for 4h47m, hit 100% (model goes <synthetic>), rate limit reset
+    # 1h6m ago (first real-model event after synthetic = Anthropic's new window start).
+    events = [
+        make_event(NOW - timedelta(hours=4, minutes=47), session="s1",
+                   model="claude-sonnet-4-6", input_tokens=1_000_000),
+        make_event(NOW - timedelta(hours=2), session="s1",
+                   model="<synthetic>", input_tokens=50_000),
+        make_event(NOW - timedelta(hours=1, minutes=6), session="s1",
+                   model="claude-sonnet-4-6", input_tokens=500_000),  # reset point
+        make_event(NOW - timedelta(minutes=30), session="s1",
+                   model="claude-sonnet-4-6", input_tokens=300_000),
+    ]
+    snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
+    assert snap.session.window_tokens == 800_000   # 500K + 300K only (post-reset)
+    reset_ref = NOW - timedelta(hours=1, minutes=6)
+    assert snap.session.window_resets_at == reset_ref + timedelta(hours=5)
+
+
 def test_session_picks_newest_start_not_most_recently_active():
     # S_old was started first (4h ago) and has a stray background event 5s ago.
     # S_new was started more recently (30min ago).

@@ -120,12 +120,9 @@ def _compute_session(
 ) -> SessionMetrics:
     window_start = now - WINDOW_DURATION
 
-    # Scope to the most-recently STARTED session (the one whose first-ever event is
-    # newest). This matches Claude.ai's "Current session" display, which shows the
-    # window for the session you most recently opened — not a combined rolling window
-    # across all concurrent projects, and not the session with the most recent event
-    # (which breaks when an older session has stray background activity after a newer
-    # one starts).
+    # Step 1: pick the most-recently STARTED session.
+    # "Most recently started" = session whose first-ever event is newest.
+    # This avoids an older session with stray background activity displacing a newer one.
     current_session_id: str | None = None
     if events:
         session_starts: dict[str | None, datetime] = {}
@@ -135,9 +132,27 @@ def _compute_session(
                 session_starts[e.session_id] = e.timestamp
         current_session_id = max(session_starts, key=lambda sid: session_starts[sid])
 
+    # Step 2: find the effective window start within that session.
+    # When the rate limit is hit, Claude Code switches to a synthetic model
+    # (model name wrapped in angle brackets, e.g. "<synthetic>"). The first
+    # real-model event AFTER a synthetic run marks Anthropic's window reset —
+    # that's when the new 5-hour allocation starts. Only count tokens from there.
+    effective_start = window_start
+    was_synthetic = False
+    for e in events:
+        if e.session_id != current_session_id:
+            continue
+        is_syn = bool(e.model and e.model.startswith("<"))
+        if is_syn:
+            was_synthetic = True
+        elif was_synthetic:
+            effective_start = e.timestamp  # first real call after rate-limit reset
+            was_synthetic = False
+
+    cutoff = max(effective_start, window_start)
     window_events = [
         e for e in events
-        if e.timestamp >= window_start and e.session_id == current_session_id
+        if e.timestamp >= cutoff and e.session_id == current_session_id
     ]
     w_input  = sum(e.input_tokens            for e in window_events)
     w_output = sum(e.output_tokens           for e in window_events)
