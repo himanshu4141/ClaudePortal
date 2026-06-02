@@ -132,27 +132,10 @@ def _compute_session(
                 session_starts[e.session_id] = e.timestamp
         current_session_id = max(session_starts, key=lambda sid: session_starts[sid])
 
-    # Step 2: find the effective window start within that session.
-    # When the rate limit is hit, Claude Code switches to a synthetic model
-    # (model name wrapped in angle brackets, e.g. "<synthetic>"). The first
-    # real-model event AFTER a synthetic run marks Anthropic's window reset —
-    # that's when the new 5-hour allocation starts. Only count tokens from there.
-    effective_start = window_start
-    was_synthetic = False
-    for e in events:
-        if e.session_id != current_session_id:
-            continue
-        is_syn = bool(e.model and e.model.startswith("<"))
-        if is_syn:
-            was_synthetic = True
-        elif was_synthetic:
-            effective_start = e.timestamp  # first real call after rate-limit reset
-            was_synthetic = False
-
-    cutoff = max(effective_start, window_start)
+    # Step 2: count events for that session within the 5h rolling window.
     window_events = [
         e for e in events
-        if e.timestamp >= cutoff and e.session_id == current_session_id
+        if e.timestamp >= window_start and e.session_id == current_session_id
     ]
     w_input  = sum(e.input_tokens            for e in window_events)
     w_output = sum(e.output_tokens           for e in window_events)
@@ -164,10 +147,21 @@ def _compute_session(
     pct = 100.0 * window_tokens / window_limit_tokens if window_limit_tokens else 0.0
     pct = min(pct, 100.0)
 
+    # Reset time: anchor to the session's own start (first-ever event for this
+    # session_id), not the oldest event currently in the rolling window.
+    # "session_start + 5h" = when this session's Anthropic allocation window expires,
+    # which matches Claude.ai's display. "oldest_event_in_window + 5h" degrades to
+    # 0min for any session that has been continuously active for a full 5h cycle.
     resets_at = None
-    if window_events:
-        oldest_in_window = min(e.timestamp for e in window_events)
-        resets_at = oldest_in_window + WINDOW_DURATION
+    if current_session_id is not None and events:
+        session_start = session_starts.get(current_session_id) if session_starts else None
+        if session_start is not None:
+            candidate = session_start + WINDOW_DURATION
+            if candidate > now:
+                resets_at = candidate
+            elif window_events:
+                # Session is older than 5h; fall back to rolling oldest-event anchor.
+                resets_at = min(e.timestamp for e in window_events) + WINDOW_DURATION
 
     return SessionMetrics(
         window_tokens=window_tokens,

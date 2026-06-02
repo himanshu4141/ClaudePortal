@@ -144,23 +144,32 @@ def test_session_scoped_to_current_session_id():
     assert snap.session.window_pct == round(500_000 / 2_766_000 * 100, 1)
 
 
-def test_session_anchors_to_last_synthetic_to_real_transition():
-    # Session ran for 4h47m, hit 100% (model goes <synthetic>), rate limit reset
-    # 1h6m ago (first real-model event after synthetic = Anthropic's new window start).
+def test_session_resets_at_anchored_to_session_start():
+    # Reset time = session_start + 5h, regardless of where events are in the window.
+    # This matches Claude.ai's "resets in X" which shows when the session's allocation
+    # window expires, not when the oldest individual token expires.
     events = [
-        make_event(NOW - timedelta(hours=4, minutes=47), session="s1",
-                   model="claude-sonnet-4-6", input_tokens=1_000_000),
-        make_event(NOW - timedelta(hours=2), session="s1",
+        make_event(NOW - timedelta(hours=1, minutes=6), session="s1", input_tokens=500_000),
+        make_event(NOW - timedelta(minutes=30), session="s1", input_tokens=300_000),
+    ]
+    snap = aggregate(events, now=NOW, tz=UTC)
+    expected = (NOW - timedelta(hours=1, minutes=6)) + timedelta(hours=5)
+    assert snap.session.window_resets_at == expected
+
+
+def test_session_synthetic_events_counted_normally():
+    # <synthetic> model appears constantly during Claude Code tool-use; it is NOT
+    # a rate-limit signal and should be counted like any other event.
+    events = [
+        make_event(NOW - timedelta(hours=1), session="s1",
                    model="<synthetic>", input_tokens=50_000),
-        make_event(NOW - timedelta(hours=1, minutes=6), session="s1",
-                   model="claude-sonnet-4-6", input_tokens=500_000),  # reset point
         make_event(NOW - timedelta(minutes=30), session="s1",
                    model="claude-sonnet-4-6", input_tokens=300_000),
     ]
-    snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
-    assert snap.session.window_tokens == 800_000   # 500K + 300K only (post-reset)
-    reset_ref = NOW - timedelta(hours=1, minutes=6)
-    assert snap.session.window_resets_at == reset_ref + timedelta(hours=5)
+    snap = aggregate(events, now=NOW, tz=UTC)
+    assert snap.session.window_tokens == 350_000
+    # session started 1h ago → resets in 4h
+    assert snap.session.window_resets_at == (NOW - timedelta(hours=1)) + timedelta(hours=5)
 
 
 def test_session_picks_newest_start_not_most_recently_active():
