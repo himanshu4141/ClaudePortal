@@ -23,11 +23,22 @@ MAX_PAYLOAD_BYTES = 1024
 logger = logging.getLogger(__name__)
 
 # Calibrated against real Pro plan usage (in+out+cache_creation tokens).
+# Pro session: observed limit hit at window_tokens=2,765,639; rounded up to 2,766,000.
+# Pro week: 107,271,806 observed at 23% → 466M limit confirmed.
+# Max5/Max20: assumed 5× / 20× Pro (community calibration data welcome).
 # Override per-field with SESSION_LIMIT_TOKENS / WEEK_LIMIT_TOKENS in .env.
 PLAN_LIMITS: dict[str, dict[str, int]] = {
     "pro": {
-        "session": 2_796_000,
-        "week":  466_000_000,
+        "session":   2_766_000,
+        "week":    466_000_000,
+    },
+    "max5": {
+        "session":  13_830_000,   # 5× pro
+        "week":  2_330_000_000,
+    },
+    "max20": {
+        "session":  55_320_000,   # 20× pro
+        "week":  9_320_000_000,
     },
 }
 

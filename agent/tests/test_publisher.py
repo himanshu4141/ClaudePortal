@@ -131,7 +131,19 @@ def test_publisher_config_explicit_tokens_override_plan_preset(monkeypatch):
     monkeypatch.setenv("SESSION_LIMIT_TOKENS", "9999999")
     config = PublisherConfig.from_env()
     assert config.session_limit_tokens == 9_999_999
-    assert config.week_limit_tokens == PLAN_LIMITS["pro"]["week"]  # still from plan
+    assert config.week_limit_tokens == PLAN_LIMITS["pro"]["week"]
+
+
+def test_publisher_config_max5_and_max20_presets(monkeypatch):
+    monkeypatch.setenv("ADAFRUIT_IO_USERNAME", "alice")
+    monkeypatch.setenv("ADAFRUIT_IO_KEY", "aio_xyz")
+    monkeypatch.delenv("SESSION_LIMIT_TOKENS", raising=False)
+    monkeypatch.delenv("WEEK_LIMIT_TOKENS", raising=False)
+    for plan in ("max5", "max20"):
+        monkeypatch.setenv("CLAUDE_PLAN", plan)
+        config = PublisherConfig.from_env()
+        assert config.session_limit_tokens == PLAN_LIMITS[plan]["session"]
+        assert config.week_limit_tokens == PLAN_LIMITS[plan]["week"]
 
 
 def test_publisher_config_unknown_plan_gives_zero_defaults(monkeypatch):

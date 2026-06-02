@@ -132,6 +132,18 @@ def test_session_token_breakdown():
     assert snap.session.window_tokens == 60  # 10+20+30
 
 
+def test_session_scoped_to_current_session_id():
+    # Old session (S1) near 100%, new session (S2) just started at ~18%.
+    # Both are within the 5h rolling window, but S2 should get a fresh allocation.
+    events = [
+        make_event(NOW - timedelta(hours=3), session="s_old", input_tokens=2_700_000),
+        make_event(NOW - timedelta(minutes=30), session="s_new", input_tokens=500_000),
+    ]
+    snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
+    assert snap.session.window_tokens == 500_000
+    assert snap.session.window_pct == round(500_000 / 2_766_000 * 100, 1)
+
+
 def test_session_pct_zero_when_limit_not_configured():
     events = [make_event(NOW - timedelta(hours=1), input_tokens=1_000_000)]
     snap = aggregate(events, now=NOW, tz=UTC, window_limit_tokens=0)

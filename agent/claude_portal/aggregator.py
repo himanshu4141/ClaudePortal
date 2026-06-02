@@ -119,7 +119,16 @@ def _compute_session(
     window_limit_tokens: int,
 ) -> SessionMetrics:
     window_start = now - WINDOW_DURATION
-    window_events = [e for e in events if e.timestamp >= window_start]
+
+    # Scope to the most-recent session_id. Anthropic's rate limit is per-conversation
+    # session: starting a new session grants a fresh allocation even if the previous
+    # session's 5-hour window hasn't expired yet. Without this scoping, a just-started
+    # new session would show 100% while the old session's tokens are still in-window.
+    current_session_id = events[-1].session_id if events else None
+    window_events = [
+        e for e in events
+        if e.timestamp >= window_start and e.session_id == current_session_id
+    ]
     w_input  = sum(e.input_tokens            for e in window_events)
     w_output = sum(e.output_tokens           for e in window_events)
     w_cw     = sum(e.cache_creation_tokens   for e in window_events)
