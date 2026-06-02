@@ -37,3 +37,4 @@ Thumbs.db
 
 # CircuitPython build artifacts
 device/CIRCUITPY/
+.claude/worktrees/*

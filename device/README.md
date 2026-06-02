@@ -11,9 +11,11 @@ with a pixel-art Claude Code mascot.
    [`lib_requirements.txt`](lib_requirements.txt). With
    [`circup`](https://github.com/adafruit/circup):
    ```bash
-   circup install adafruit_minimqtt adafruit_connection_manager \
+   circup install adafruit_esp32spi adafruit_minimqtt adafruit_connection_manager \
                   adafruit_matrixportal adafruit_display_text
    ```
+   > The Matrix Portal M4 uses `adafruit_esp32spi` for Wi-Fi — the native
+   > `wifi`/`socketpool`/`ssl` modules are not available on this board in CP 9.x.
 3. Copy `secrets.py.example` to the board as `secrets.py` and fill in your
    Wi-Fi credentials and Adafruit IO username + AIO key:
    ```bash

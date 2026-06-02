@@ -47,7 +47,7 @@ class NowScreen:
         text_x = HERO_X + 20
         self.model_label = label.Label(terminalio.FONT, text="", color=PALETTE["cream"], x=text_x, y=5)
         self.tokens_label = label.Label(terminalio.FONT, text="", color=PALETTE["copper"], x=text_x, y=17)
-        self.sub_label = label.Label(terminalio.FONT, text="", color=PALETTE["cream"], x=text_x, y=28)
+        self.sub_label = label.Label(terminalio.FONT, text="", color=PALETTE["amber"], x=text_x, y=26)
         self.group.append(self.hero)
         self.group.append(self.model_label)
         self.group.append(self.tokens_label)
@@ -58,10 +58,10 @@ class NowScreen:
         active = now.get("active", False)
         self.model_label.text = short_model(now.get("model"))
         self.model_label.color = PALETTE["amber"] if active else PALETTE["cream"]
-        self.tokens_label.text = format_tokens(now.get("tokens") or 0)
+        self.tokens_label.text = "T:" + format_tokens(now.get("tokens") or 0)
         sub = format_duration(now.get("duration_min") or 0)
         if active:
-            sub = ("* " + sub) if sub else "*"
+            sub = ("> " + sub) if sub else ">"
         self.sub_label.text = sub
 
     def has_hero(self):
@@ -75,7 +75,7 @@ class NowScreen:
 
 
 class TodayScreen:
-    BAR_WIDTH = 46
+    BAR_WIDTH = 36
     BAR_HEIGHT = 4
     BAR_X = 2
     BAR_Y = 22
@@ -86,7 +86,10 @@ class TodayScreen:
         self.title = label.Label(terminalio.FONT, text="TODAY", color=PALETTE["cream"], x=2, y=4)
         self.tokens_label = label.Label(terminalio.FONT, text="", color=PALETTE["copper"], x=2, y=16)
         self.cost_label = label.Label(terminalio.FONT, text="", color=PALETTE["pink"], x=40, y=16)
-        self.pct_label = label.Label(terminalio.FONT, text="", color=PALETTE["white"], x=50, y=25)
+        self.pct_label = label.Label(
+            terminalio.FONT, text="", color=PALETTE["white"],
+            anchor_point=(1.0, 0.5), anchored_position=(62, 25),
+        )
 
         self.bar_bitmap = displayio.Bitmap(self.BAR_WIDTH, self.BAR_HEIGHT, 2)
         self.bar_palette = displayio.Palette(2)
@@ -138,7 +141,7 @@ class WeekScreen:
     SPARK_WIDTH = WIDTH - 4
     SPARK_HEIGHT = 10
     STACK_X = 2
-    STACK_Y = 22
+    STACK_Y = 20
     STACK_WIDTH = WIDTH - 4
     STACK_HEIGHT = 3
 
@@ -146,8 +149,8 @@ class WeekScreen:
         self.group = displayio.Group()
         self.corner = make_corner(x=CORNER_X, y=0)
         self.title = label.Label(terminalio.FONT, text="WK", color=PALETTE["cream"], x=2, y=4)
-        self.total_label = label.Label(terminalio.FONT, text="", color=PALETTE["copper"], x=18, y=4)
-        self.split_label = label.Label(terminalio.FONT, text="", color=PALETTE["cream"], x=2, y=29)
+        self.total_label = label.Label(terminalio.FONT, text="", color=PALETTE["amber"], x=18, y=4)
+        self.split_label = label.Label(terminalio.FONT, text="", color=PALETTE["cream"], x=2, y=27)
 
         self.spark_group = displayio.Group()
         self.stack_group = displayio.Group()

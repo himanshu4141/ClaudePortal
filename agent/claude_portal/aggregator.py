@@ -10,6 +10,7 @@ ACTIVE_THRESHOLD = timedelta(minutes=5)
 WINDOW_DURATION = timedelta(hours=5)
 RATE_WINDOW = timedelta(minutes=5)
 WEEK_DAYS = 7
+WEEK_START_WEEKDAY = 4  # Friday (Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6)
 DEFAULT_WINDOW_LIMIT_TOKENS = 20_000_000
 
 # USD per 1M tokens. Approximate Pro/Max pricing for cost-equivalent display.
@@ -137,9 +138,11 @@ def _compute_today(
 
 def _compute_week(events: list[UsageEvent], now: datetime, tz: tzinfo) -> WeekMetrics:
     today_local = now.astimezone(tz).date()
-    days = [today_local - timedelta(days=WEEK_DAYS - 1 - i) for i in range(WEEK_DAYS)]
+    days_since_reset = (today_local.weekday() - WEEK_START_WEEKDAY) % 7
+    week_start_date = today_local - timedelta(days=days_since_reset)
+    days = [week_start_date + timedelta(days=i) for i in range(WEEK_DAYS)]
     labels = [d.strftime("%a")[0] for d in days]
-    week_start = datetime.combine(days[0], datetime.min.time(), tzinfo=tz)
+    week_start = datetime.combine(week_start_date, datetime.min.time(), tzinfo=tz)
 
     per_day = [0] * WEEK_DAYS
     opus = 0

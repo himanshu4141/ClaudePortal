@@ -1,17 +1,25 @@
 # CircuitPython libraries required on CIRCUITPY/lib/
-# Tested with CircuitPython 9.x on the Adafruit Matrix Portal M4.
+# Tested with CircuitPython 9.2.x on the Adafruit Matrix Portal M4.
+#
+# The Matrix Portal M4 (SAMD51 + ESP32 co-processor) uses adafruit_esp32spi
+# for WiFi — the native wifi/socketpool/ssl modules are not available on this
+# board (those only exist on boards that run CircuitPython natively on ESP32).
 #
 # Install with circup:
-#   circup install adafruit_minimqtt adafruit_connection_manager \
+#   circup install adafruit_esp32spi adafruit_minimqtt adafruit_connection_manager \
 #                  adafruit_matrixportal adafruit_display_text
 #
-# Or copy these from the official CP9 library bundle:
+# Or copy these folders/files from the official CP9 library bundle:
 #   https://circuitpython.org/libraries
 
+adafruit_esp32spi/
 adafruit_minimqtt/
-adafruit_connection_manager.mpy
 adafruit_matrixportal/
+adafruit_portalbase/
 adafruit_display_text/
+adafruit_connection_manager.mpy
+adafruit_requests.mpy
+adafruit_ticks.mpy
 
 # Built-in to CircuitPython 9.x core (no separate install needed):
-#   wifi, socketpool, ssl, displayio, terminalio, json, time
+#   displayio, terminalio, json, time, board, busio, digitalio
