@@ -133,8 +133,8 @@ def test_session_token_breakdown():
 
 
 def test_session_scoped_to_current_session_id():
-    # Old session (S1) near 100%, new session (S2) just started at ~18%.
-    # Both are within the 5h rolling window, but S2 should get a fresh allocation.
+    # Old session (S1) near 100%, new session (S2) just started.
+    # S2 was started more recently (newer first-event) so it wins.
     events = [
         make_event(NOW - timedelta(hours=3), session="s_old", input_tokens=2_700_000),
         make_event(NOW - timedelta(minutes=30), session="s_new", input_tokens=500_000),
@@ -142,6 +142,19 @@ def test_session_scoped_to_current_session_id():
     snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
     assert snap.session.window_tokens == 500_000
     assert snap.session.window_pct == round(500_000 / 2_766_000 * 100, 1)
+
+
+def test_session_picks_newest_start_not_most_recently_active():
+    # S_old was started first (4h ago) and has a stray background event 5s ago.
+    # S_new was started more recently (30min ago).
+    # The stray event should NOT make s_old "win" — we select by session-start time.
+    events = [
+        make_event(NOW - timedelta(hours=4), session="s_old", input_tokens=500_000),
+        make_event(NOW - timedelta(minutes=30), session="s_new", input_tokens=300_000),
+        make_event(NOW - timedelta(seconds=5), session="s_old", input_tokens=1_000),  # stray
+    ]
+    snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
+    assert snap.session.window_tokens == 300_000  # s_new, not s_old
 
 
 def test_session_pct_zero_when_limit_not_configured():

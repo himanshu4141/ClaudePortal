@@ -120,11 +120,21 @@ def _compute_session(
 ) -> SessionMetrics:
     window_start = now - WINDOW_DURATION
 
-    # Scope to the most-recent session_id. Anthropic's rate limit is per-conversation
-    # session: starting a new session grants a fresh allocation even if the previous
-    # session's 5-hour window hasn't expired yet. Without this scoping, a just-started
-    # new session would show 100% while the old session's tokens are still in-window.
-    current_session_id = events[-1].session_id if events else None
+    # Scope to the most-recently STARTED session (the one whose first-ever event is
+    # newest). This matches Claude.ai's "Current session" display, which shows the
+    # window for the session you most recently opened — not a combined rolling window
+    # across all concurrent projects, and not the session with the most recent event
+    # (which breaks when an older session has stray background activity after a newer
+    # one starts).
+    current_session_id: str | None = None
+    if events:
+        session_starts: dict[str | None, datetime] = {}
+        for e in events:
+            prev = session_starts.get(e.session_id)
+            if prev is None or e.timestamp < prev:
+                session_starts[e.session_id] = e.timestamp
+        current_session_id = max(session_starts, key=lambda sid: session_starts[sid])
+
     window_events = [
         e for e in events
         if e.timestamp >= window_start and e.session_id == current_session_id
