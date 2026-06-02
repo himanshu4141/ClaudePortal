@@ -5,10 +5,9 @@ import logging
 import os
 import ssl
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import paho.mqtt.client as mqtt
 
@@ -23,6 +22,15 @@ MAX_PAYLOAD_BYTES = 1024
 
 logger = logging.getLogger(__name__)
 
+# Calibrated against real Pro plan usage (in+out+cache_creation tokens).
+# Override per-field with SESSION_LIMIT_TOKENS / WEEK_LIMIT_TOKENS in .env.
+PLAN_LIMITS: dict[str, dict[str, int]] = {
+    "pro": {
+        "session": 2_796_000,
+        "week":  466_000_000,
+    },
+}
+
 
 @dataclass
 class PublisherConfig:
@@ -32,6 +40,7 @@ class PublisherConfig:
     host: str = ADAFRUIT_IO_HOST
     port: int = ADAFRUIT_IO_PORT
     interval: int = DEFAULT_INTERVAL_SECONDS
+    session_limit_tokens: int = 0  # 0 = not configured
     week_reset_weekday: int = 4    # Friday (Mon=0 … Fri=4 … Sun=6)
     week_reset_hour: int = 0       # hour-of-day in week_reset_tz
     week_reset_tz: str = ""        # IANA tz name; empty = system local tz
@@ -53,15 +62,23 @@ class PublisherConfig:
                 "ADAFRUIT_IO_USERNAME and ADAFRUIT_IO_KEY must be set "
                 "(see agent/.env.example)"
             )
+        plan = os.environ.get("CLAUDE_PLAN", "").lower().strip()
+        plan_defaults = PLAN_LIMITS.get(plan, {})
+
         return cls(
             username=username,
             key=key,
             feed=os.environ.get("PUBLISHER_FEED", DEFAULT_FEED),
             interval=int(os.environ.get("PUBLISHER_INTERVAL", DEFAULT_INTERVAL_SECONDS)),
+            session_limit_tokens=int(
+                os.environ.get("SESSION_LIMIT_TOKENS", plan_defaults.get("session", 0))
+            ),
             week_reset_weekday=int(os.environ.get("WEEK_RESET_WEEKDAY", "4")),
             week_reset_hour=int(os.environ.get("WEEK_RESET_HOUR", "0")),
             week_reset_tz=os.environ.get("WEEK_RESET_TZ", ""),
-            week_limit_tokens=int(os.environ.get("WEEK_LIMIT_TOKENS", "0")),
+            week_limit_tokens=int(
+                os.environ.get("WEEK_LIMIT_TOKENS", plan_defaults.get("week", 0))
+            ),
         )
 
 
@@ -74,6 +91,8 @@ def _minutes_until(dt: datetime | None, now: datetime) -> int | None:
 
 def snapshot_to_payload(snapshot: Snapshot) -> str:
     now_ts = snapshot.generated_at
+    s = snapshot.session
+    w = snapshot.week
     return json.dumps(
         {
             "ts": now_ts.isoformat(),
@@ -83,13 +102,26 @@ def snapshot_to_payload(snapshot: Snapshot) -> str:
                 "rate": snapshot.now.tokens_per_minute,
             },
             "session": {
-                "window_pct": snapshot.today.window_pct,
-                "resets_in_min": _minutes_until(snapshot.today.window_resets_at, now_ts),
+                "window_pct": s.window_pct,
+                "window_tokens": s.window_tokens,
+                "resets_in_min": _minutes_until(s.window_resets_at, now_ts),
+                "tok": {
+                    "in": s.window_input_tokens,
+                    "out": s.window_output_tokens,
+                    "cw": s.window_cache_creation_tokens,
+                    "cr": s.window_cache_read_tokens,
+                },
             },
             "week": {
-                "window_pct": snapshot.week.window_pct,
-                "resets_in_min": _minutes_until(snapshot.week.resets_at, now_ts),
-                "total": snapshot.week.total_tokens,
+                "window_pct": w.window_pct,
+                "resets_in_min": _minutes_until(w.resets_at, now_ts),
+                "total": w.total_tokens,
+                "tok": {
+                    "in": w.input_tokens,
+                    "out": w.output_tokens,
+                    "cw": w.cache_creation_tokens,
+                    "cr": w.cache_read_tokens,
+                },
             },
         },
         separators=(",", ":"),
@@ -152,6 +184,7 @@ def run_loop(
         while iterations is None or i < iterations:
             payload = snapshot_to_payload(aggregate(
                 parse_all(root),
+                window_limit_tokens=config.session_limit_tokens,
                 week_reset_weekday=config.week_reset_weekday,
                 week_reset_hour=config.week_reset_hour,
                 week_reset_tz=config.week_reset_tzinfo,

@@ -85,14 +85,22 @@ def summarize(snapshot):
     now = snapshot.get("now") or {}
     sess = snapshot.get("session") or {}
     week = snapshot.get("week") or {}
+    st = sess.get("tok") or {}
+    wt = week.get("tok") or {}
     print("  NOW     active={} model={} rate={}/min".format(
         now.get("active"), now.get("model"), now.get("rate"),
     ))
-    print("  SESSION pct={}% resets_in={}min".format(
-        sess.get("window_pct"), sess.get("resets_in_min"),
+    print("  SESSION pct={}% tokens={} resets_in={}min".format(
+        sess.get("window_pct"), sess.get("window_tokens"), sess.get("resets_in_min"),
     ))
-    print("  WEEK    pct={}% resets_in={}min total={}".format(
-        week.get("window_pct"), week.get("resets_in_min"), week.get("total"),
+    print("          in={} out={} cw={} cr={}".format(
+        st.get("in"), st.get("out"), st.get("cw"), st.get("cr"),
+    ))
+    print("  WEEK    pct={}% total={} resets_in={}min".format(
+        week.get("window_pct"), week.get("total"), week.get("resets_in_min"),
+    ))
+    print("          in={} out={} cw={} cr={}".format(
+        wt.get("in"), wt.get("out"), wt.get("cw"), wt.get("cr"),
     ))
 
 

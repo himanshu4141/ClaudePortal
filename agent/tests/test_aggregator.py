@@ -35,8 +35,8 @@ def test_aggregate_empty_returns_zero_snapshot():
     snap = aggregate([], now=NOW, tz=UTC)
     assert snap.now.active is False
     assert snap.now.session_tokens == 0
-    assert snap.today.total_tokens == 0
-    assert snap.today.window_pct == 0.0
+    assert snap.session.window_tokens == 0
+    assert snap.session.window_pct == 0.0
     assert snap.week.total_tokens == 0
     assert snap.week.window_pct == 0.0
     assert snap.week.resets_at is not None
@@ -80,65 +80,83 @@ def test_now_tokens_per_minute_uses_5min_window():
     assert snap.now.tokens_per_minute == 120.0  # 600 / 5
 
 
-def test_today_window_pct_against_limit():
+def test_session_window_pct_against_limit():
     events = [make_event(NOW - timedelta(hours=1), input_tokens=2_000_000)]
     snap = aggregate(events, now=NOW, window_limit_tokens=20_000_000, tz=UTC)
-    assert snap.today.window_tokens == 2_000_000
-    assert snap.today.window_pct == 10.0
+    assert snap.session.window_tokens == 2_000_000
+    assert snap.session.window_pct == 10.0
 
 
-def test_today_window_pct_capped_at_100():
+def test_session_window_pct_capped_at_100():
     events = [make_event(NOW - timedelta(hours=1), input_tokens=50_000_000)]
     snap = aggregate(events, now=NOW, window_limit_tokens=20_000_000, tz=UTC)
-    assert snap.today.window_pct == 100.0
+    assert snap.session.window_pct == 100.0
 
 
-def test_today_excludes_events_outside_5h_window():
+def test_session_excludes_events_outside_5h_window():
     events = [
         make_event(NOW - timedelta(hours=10), input_tokens=999_999),
         make_event(NOW - timedelta(hours=1), input_tokens=500_000),
     ]
     snap = aggregate(events, now=NOW, window_limit_tokens=20_000_000, tz=UTC)
-    assert snap.today.window_tokens == 500_000
+    assert snap.session.window_tokens == 500_000
 
 
-def test_today_cost_estimate_sonnet():
-    today_morning = NOW.replace(hour=10)
+def test_session_excludes_cache_read_tokens_from_window_count():
+    events = [make_event(
+        NOW - timedelta(hours=1),
+        input_tokens=100,
+        output_tokens=200,
+        cache_creation_tokens=300,
+        cache_read_tokens=1_000_000,  # large but excluded
+    )]
+    snap = aggregate(events, now=NOW, window_limit_tokens=10_000, tz=UTC)
+    assert snap.session.window_tokens == 600        # 100+200+300
+    assert snap.session.window_cache_read_tokens == 1_000_000
+    assert snap.session.window_pct == 6.0           # 600/10000
+
+
+def test_session_token_breakdown():
+    events = [make_event(
+        NOW - timedelta(hours=1),
+        input_tokens=10,
+        output_tokens=20,
+        cache_creation_tokens=30,
+        cache_read_tokens=40,
+    )]
+    snap = aggregate(events, now=NOW, tz=UTC)
+    assert snap.session.window_input_tokens == 10
+    assert snap.session.window_output_tokens == 20
+    assert snap.session.window_cache_creation_tokens == 30
+    assert snap.session.window_cache_read_tokens == 40
+    assert snap.session.window_tokens == 60  # 10+20+30
+
+
+def test_session_pct_zero_when_limit_not_configured():
+    events = [make_event(NOW - timedelta(hours=1), input_tokens=1_000_000)]
+    snap = aggregate(events, now=NOW, tz=UTC, window_limit_tokens=0)
+    assert snap.session.window_pct == 0.0
+
+
+def test_window_resets_at_is_oldest_in_window_plus_5h():
+    oldest = NOW - timedelta(hours=3)
     events = [
-        make_event(
-            today_morning,
-            model="claude-sonnet-4-6",
-            input_tokens=1_000_000,
-            output_tokens=1_000_000,
-        )
+        make_event(oldest, input_tokens=100),
+        make_event(NOW - timedelta(minutes=10), input_tokens=200),
     ]
     snap = aggregate(events, now=NOW, tz=UTC)
-    assert abs(snap.today.estimated_cost_usd - 18.00) < 0.01  # 3 + 15
-
-
-def test_today_cost_estimate_opus():
-    today_morning = NOW.replace(hour=10)
-    events = [
-        make_event(
-            today_morning,
-            model="claude-opus-4-7",
-            input_tokens=1_000_000,
-            output_tokens=1_000_000,
-        )
-    ]
-    snap = aggregate(events, now=NOW, tz=UTC)
-    assert abs(snap.today.estimated_cost_usd - 90.00) < 0.01  # 15 + 75
+    assert snap.session.window_resets_at == oldest + timedelta(hours=5)
 
 
 # NOW = Thursday 2026-05-14 12:00 UTC, default week resets Friday midnight UTC.
-# Most recent Friday midnight UTC = 2026-05-08 00:00 UTC (6 days before Thursday noon).
+# Most recent Friday midnight UTC = 2026-05-08 00:00 UTC.
 # Next Friday midnight UTC = 2026-05-15 00:00 UTC.
 
 def test_week_counts_events_since_last_reset():
     events = [
-        make_event(NOW - timedelta(days=6, hours=2), input_tokens=100),  # May 8 ~10:00 → in week
-        make_event(NOW - timedelta(days=2, hours=1), input_tokens=200),  # May 12 ~11:00 → in week
-        make_event(NOW - timedelta(hours=1), input_tokens=300),          # May 14 ~11:00 → in week
+        make_event(NOW - timedelta(days=6, hours=2), input_tokens=100),
+        make_event(NOW - timedelta(days=2, hours=1), input_tokens=200),
+        make_event(NOW - timedelta(hours=1), input_tokens=300),
     ]
     snap = aggregate(events, now=NOW, tz=UTC)
     assert snap.week.total_tokens == 600
@@ -146,11 +164,24 @@ def test_week_counts_events_since_last_reset():
 
 def test_week_drops_events_before_last_reset():
     events = [
-        make_event(NOW - timedelta(days=8), input_tokens=9999),  # May 6 → before May 8 reset
-        make_event(NOW - timedelta(hours=1), input_tokens=100),  # May 14 → in week
+        make_event(NOW - timedelta(days=8), input_tokens=9999),  # before May 8 reset
+        make_event(NOW - timedelta(hours=1), input_tokens=100),
     ]
     snap = aggregate(events, now=NOW, tz=UTC)
     assert snap.week.total_tokens == 100
+
+
+def test_week_excludes_cache_reads_from_total():
+    events = [make_event(
+        NOW - timedelta(hours=1),
+        input_tokens=100,
+        output_tokens=200,
+        cache_creation_tokens=300,
+        cache_read_tokens=5_000_000,  # large but excluded
+    )]
+    snap = aggregate(events, now=NOW, tz=UTC)
+    assert snap.week.total_tokens == 600
+    assert snap.week.cache_read_tokens == 5_000_000
 
 
 def test_week_model_split_opus_vs_sonnet():
@@ -186,9 +217,6 @@ def test_week_window_pct_zero_when_limit_not_configured():
 def test_week_respects_custom_reset_hour_and_tz():
     from zoneinfo import ZoneInfo
     dublin = ZoneInfo("Europe/Dublin")
-    # NOW = 2026-05-14 12:00 UTC = 13:00 Dublin (IST = UTC+1 in summer)
-    # Week resets Friday 9AM Dublin. Last reset: Fri May 8 09:00 Dublin = 08:00 UTC.
-    # Next reset: Fri May 15 09:00 Dublin = 08:00 UTC.
     snap = aggregate([], now=NOW, tz=UTC, week_reset_weekday=4, week_reset_hour=9, week_reset_tz=dublin)
     expected = datetime(2026, 5, 15, 8, 0, tzinfo=UTC)
     assert snap.week.resets_at == expected
@@ -197,19 +225,7 @@ def test_week_respects_custom_reset_hour_and_tz():
 def test_week_reset_on_friday_before_reset_hour_stays_in_previous_week():
     from zoneinfo import ZoneInfo
     dublin = ZoneInfo("Europe/Dublin")
-    # Fri May 15 08:30 Dublin (07:30 UTC) — reset hour is 9AM, hasn't fired yet
     before_reset = datetime(2026, 5, 15, 7, 30, tzinfo=UTC)
     snap = aggregate([], now=before_reset, tz=UTC, week_reset_weekday=4, week_reset_hour=9, week_reset_tz=dublin)
-    # Still in previous week; next reset is still May 15 09:00 Dublin = 08:00 UTC
     expected = datetime(2026, 5, 15, 8, 0, tzinfo=UTC)
     assert snap.week.resets_at == expected
-
-
-def test_window_resets_at_is_oldest_in_window_plus_5h():
-    oldest = NOW - timedelta(hours=3)
-    events = [
-        make_event(oldest, input_tokens=100),
-        make_event(NOW - timedelta(minutes=10), input_tokens=200),
-    ]
-    snap = aggregate(events, now=NOW, tz=UTC)
-    assert snap.today.window_resets_at == oldest + timedelta(hours=5)
