@@ -120,19 +120,22 @@ def _compute_session(
 ) -> SessionMetrics:
     window_start = now - WINDOW_DURATION
 
-    # Step 1: pick the most-recently STARTED session.
-    # "Most recently started" = session whose first-ever event is newest.
-    # This avoids an older session with stray background activity displacing a newer one.
+    # Select the currently active session: the one whose most recent REAL-MODEL event
+    # is newest. Walking backwards through time-sorted events, we skip synthetic events
+    # (model name in angle brackets, e.g. "<synthetic>") because:
+    #   - <synthetic> appears constantly for tool-use processing (not rate-limit only)
+    #   - when a session hits the rate limit its recent events are all synthetic, so a
+    #     fresh new session (with real-model events) should win instead
+    # Fall back to the absolute latest event if every event is synthetic.
     current_session_id: str | None = None
     if events:
-        session_starts: dict[str | None, datetime] = {}
-        for e in events:
-            prev = session_starts.get(e.session_id)
-            if prev is None or e.timestamp < prev:
-                session_starts[e.session_id] = e.timestamp
-        current_session_id = max(session_starts, key=lambda sid: session_starts[sid])
+        ref = next(
+            (e for e in reversed(events) if not (e.model and e.model.startswith("<"))),
+            events[-1],
+        )
+        current_session_id = ref.session_id
 
-    # Step 2: count events for that session within the 5h rolling window.
+    # Count events in the 5h rolling window for the selected session.
     window_events = [
         e for e in events
         if e.timestamp >= window_start and e.session_id == current_session_id
@@ -153,11 +156,18 @@ def _compute_session(
     # which matches Claude.ai's display. "oldest_event_in_window + 5h" degrades to
     # 0min for any session that has been continuously active for a full 5h cycle.
     resets_at = None
-    if current_session_id is not None and events:
-        session_start = session_starts.get(current_session_id) if session_starts else None
+    if current_session_id is not None:
+        # session_start = first-ever event for this session (may be older than 5h window)
+        session_start = min(
+            (e.timestamp for e in events if e.session_id == current_session_id),
+            default=None,
+        )
         if session_start is not None:
             candidate = session_start + WINDOW_DURATION
             if candidate > now:
+                # Session started within the last 5h: use session_start + 5h.
+                # This matches Claude.ai's "resets in X" which shows when the session's
+                # allocation window expires, not when an individual token ages out.
                 resets_at = candidate
             elif window_events:
                 # Session is older than 5h; fall back to rolling oldest-event anchor.

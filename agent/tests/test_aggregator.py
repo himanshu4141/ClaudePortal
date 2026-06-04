@@ -172,17 +172,32 @@ def test_session_synthetic_events_counted_normally():
     assert snap.session.window_resets_at == (NOW - timedelta(hours=1)) + timedelta(hours=5)
 
 
-def test_session_picks_newest_start_not_most_recently_active():
-    # S_old was started first (4h ago) and has a stray background event 5s ago.
-    # S_new was started more recently (30min ago).
-    # The stray event should NOT make s_old "win" — we select by session-start time.
+def test_session_picks_most_recently_active_real_model_session():
+    # s_old has real-model activity most recently (5s ago), s_new has slightly older activity.
+    # s_old wins because it has the most recent real event — it IS the active session.
     events = [
         make_event(NOW - timedelta(hours=4), session="s_old", input_tokens=500_000),
         make_event(NOW - timedelta(minutes=30), session="s_new", input_tokens=300_000),
-        make_event(NOW - timedelta(seconds=5), session="s_old", input_tokens=1_000),  # stray
+        make_event(NOW - timedelta(seconds=5), session="s_old", input_tokens=1_000),
     ]
     snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
-    assert snap.session.window_tokens == 300_000  # s_new, not s_old
+    assert snap.session.window_tokens == 501_000  # s_old wins (latest real event)
+
+
+def test_session_skips_synthetic_to_find_real_session():
+    # s_old hit the rate limit (only synthetic events remain).
+    # s_new started fresh with real-model events.
+    # Latest non-synthetic event belongs to s_new, so s_new wins.
+    events = [
+        make_event(NOW - timedelta(hours=4), session="s_old",
+                   model="claude-sonnet-4-6", input_tokens=2_700_000),
+        make_event(NOW - timedelta(minutes=30), session="s_new",
+                   model="claude-sonnet-4-6", input_tokens=300_000),
+        make_event(NOW - timedelta(seconds=5), session="s_old",
+                   model="<synthetic>", input_tokens=1_000),  # rate-limited, synthetic
+    ]
+    snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
+    assert snap.session.window_tokens == 300_000  # s_new, not rate-limited s_old
 
 
 def test_session_pct_zero_when_limit_not_configured():
