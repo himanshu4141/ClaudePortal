@@ -246,11 +246,25 @@ def test_session_pct_zero_when_limit_not_configured():
     assert snap.session.window_pct == 0.0
 
 
-def test_window_resets_at_is_oldest_in_window_plus_5h():
+def test_window_resets_at_skips_isolated_old_cluster():
+    # Old cluster (3h ago) followed by a 2h50min gap then recent activity.
+    # resets_at anchors to the current cluster start, not the stale old event.
+    recent = NOW - timedelta(minutes=10)
+    events = [
+        make_event(NOW - timedelta(hours=3), input_tokens=100),
+        make_event(recent, input_tokens=200),
+    ]
+    snap = aggregate(events, now=NOW, tz=UTC)
+    assert snap.session.window_resets_at == recent + timedelta(hours=5)
+
+
+def test_window_resets_at_is_oldest_when_no_large_gap():
+    # Continuous activity (all gaps < 1h): use the absolute oldest event as anchor.
     oldest = NOW - timedelta(hours=3)
     events = [
         make_event(oldest, input_tokens=100),
-        make_event(NOW - timedelta(minutes=10), input_tokens=200),
+        make_event(NOW - timedelta(hours=2, minutes=30), input_tokens=50),
+        make_event(NOW - timedelta(hours=2, minutes=10), input_tokens=200),
     ]
     snap = aggregate(events, now=NOW, tz=UTC)
     assert snap.session.window_resets_at == oldest + timedelta(hours=5)

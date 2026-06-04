@@ -154,10 +154,20 @@ def _compute_session(
 
     # Reset time: when does the oldest currently-counted token expire?
     # That is: oldest_event_in_aggregate_window + 5h.
+    # Compute resets_at anchored to the start of the CURRENT activity cluster.
+    # When there is a long gap between an old isolated cluster (e.g. from 5h ago)
+    # and the current session, anchoring to the absolute oldest event gives 0min
+    # for the entire duration of the gap-expiry. Instead we skip over any gap
+    # longer than 1h and anchor to the first event of the most recent cluster.
+    # This matches Claude.ai's "resets in X" which reflects the current session.
     resets_at = None
     if window_events:
-        oldest = min(e.timestamp for e in window_events)
-        candidate = oldest + WINDOW_DURATION
+        times = sorted(e.timestamp for e in window_events)
+        anchor = times[0]
+        for i in range(1, len(times)):
+            if times[i] - times[i - 1] > timedelta(hours=1):
+                anchor = times[i]   # jump to start of current cluster
+        candidate = anchor + WINDOW_DURATION
         if candidate > now:
             resets_at = candidate
 
