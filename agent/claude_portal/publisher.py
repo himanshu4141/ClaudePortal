@@ -56,6 +56,7 @@ class PublisherConfig:
     week_reset_hour: int = 0       # hour-of-day in week_reset_tz
     week_reset_tz: str = ""        # IANA tz name; empty = system local tz
     week_limit_tokens: int = 0     # 0 = not configured
+    opus_weight: float = 1.0       # Opus token multiplier; set > 1.0 if Claude shows higher %
 
     @property
     def week_reset_tzinfo(self):
@@ -90,6 +91,7 @@ class PublisherConfig:
             week_limit_tokens=int(
                 os.environ.get("WEEK_LIMIT_TOKENS", plan_defaults.get("week", 0))
             ),
+            opus_weight=float(os.environ.get("OPUS_WEIGHT", "1.0")),
         )
 
 
@@ -200,6 +202,7 @@ def run_loop(
                 week_reset_hour=config.week_reset_hour,
                 week_reset_tz=config.week_reset_tzinfo,
                 week_limit_tokens=config.week_limit_tokens,
+                opus_weight=config.opus_weight,
             ))
             pub.publish(payload)
             logger.info("published %d bytes to %s", len(payload), pub.topic)

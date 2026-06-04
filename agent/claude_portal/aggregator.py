@@ -68,6 +68,7 @@ def aggregate(
     week_reset_hour: int = 0,          # hour-of-day in week_reset_tz
     week_reset_tz: tzinfo | None = None,
     week_limit_tokens: int = 0,        # 0 = not configured → window_pct stays 0.0
+    opus_weight: float = 1.0,          # multiplier for Opus tokens (Anthropic counts Opus heavier)
 ) -> Snapshot:
     now = now or datetime.now(timezone.utc)
     if tz is None:
@@ -78,7 +79,7 @@ def aggregate(
     return Snapshot(
         generated_at=now,
         now=_compute_now(events_list, now),
-        session=_compute_session(events_list, now, window_limit_tokens),
+        session=_compute_session(events_list, now, window_limit_tokens, opus_weight),
         week=_compute_week(
             events_list, now,
             week_limit_tokens, week_reset_weekday, week_reset_hour, week_reset_tz,
@@ -117,6 +118,7 @@ def _compute_session(
     events: list[UsageEvent],
     now: datetime,
     window_limit_tokens: int,
+    opus_weight: float = 1.0,
 ) -> SessionMetrics:
     window_start = now - WINDOW_DURATION
 
@@ -135,7 +137,20 @@ def _compute_session(
     w_output = sum(e.output_tokens           for e in window_events)
     w_cw     = sum(e.cache_creation_tokens   for e in window_events)
     w_cr     = sum(e.cache_read_tokens       for e in window_events)
-    window_tokens = w_input + w_output + w_cw
+    raw_tokens = w_input + w_output + w_cw
+
+    # Apply per-model weight to usage tokens. Anthropic counts Opus tokens more
+    # heavily than Sonnet toward the rate limit (empirically ~1.3-1.8×). Configure
+    # OPUS_WEIGHT in .env to calibrate; default 1.0 means no correction.
+    if opus_weight != 1.0:
+        window_tokens = sum(
+            int((e.input_tokens + e.output_tokens + e.cache_creation_tokens)
+                * (opus_weight if "opus" in (e.model or "").lower() else 1.0))
+            for e in window_events
+        )
+    else:
+        window_tokens = raw_tokens
+
     pct = 100.0 * window_tokens / window_limit_tokens if window_limit_tokens else 0.0
     pct = min(pct, 100.0)
 
