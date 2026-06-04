@@ -2,6 +2,7 @@ import displayio
 import terminalio
 from adafruit_display_text import label
 
+import buddy
 from formatting import PALETTE, bar_color_for_pct, format_countdown
 from mascot import (
     CORNER_HEIGHT,
@@ -17,6 +18,9 @@ CORNER_X = WIDTH - CORNER_WIDTH   # 55
 HERO_X = 0
 HERO_Y = (HEIGHT - HERO_HEIGHT) // 2   # 9
 TEXT_X = HERO_X + 20   # text starts right of the hero
+
+# Default dwell per screen (seconds) when rotating; screens may override .dwell.
+ROTATE_DEFAULT = 6
 
 
 class WaitingScreen:
@@ -123,9 +127,42 @@ class SessionScreen(_LimitScreen):
 class WeekLimitScreen(_LimitScreen):
     """Weekly limit: % used + countdown to next Friday reset."""
 
+    dwell = ROTATE_DEFAULT
+
     def __init__(self):
         super().__init__("WEEK")
 
     def update_data(self, snapshot):
         week = (snapshot or {}).get("week") or {}
         self._apply(week.get("window_pct"), week.get("resets_in_min"))
+
+
+class BuddyScreen:
+    """Primary screen: the full-panel animated pet + two 1px ambient bars.
+
+    The pet fills the panel (centered); BuddyController animates it via .render().
+    The bottom two rows show the session-window % and the pet's energy. update_data
+    only stashes the session % (the rest comes from the controller each tick).
+    """
+
+    dwell = 20  # pet gets the lion's share of screen time
+
+    def __init__(self):
+        self.engine = buddy.BuddyEngine()
+        self.group = displayio.Group()
+        self.group.append(self.engine.group)
+        self._session_pct = 0.0
+
+    def update_data(self, snapshot):
+        sess = (snapshot or {}).get("session") or {}
+        self._session_pct = sess.get("window_pct") or 0.0
+
+    def render(self, state, energy, now):
+        self.engine.render(state, now)
+        self.engine.draw_bars(self._session_pct, energy)
+
+    def has_hero(self):
+        return False
+
+    def has_corner(self):
+        return False

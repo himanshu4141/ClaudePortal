@@ -7,7 +7,7 @@
 #
 # Install with circup:
 #   circup install adafruit_esp32spi adafruit_minimqtt adafruit_connection_manager \
-#                  adafruit_matrixportal adafruit_display_text
+#                  adafruit_matrixportal adafruit_display_text adafruit_lis3dh
 #
 # Or copy these folders/files from the official CP9 library bundle:
 #   https://circuitpython.org/libraries
@@ -20,6 +20,10 @@ adafruit_display_text/
 adafruit_connection_manager.mpy
 adafruit_requests.mpy
 adafruit_ticks.mpy
+adafruit_lis3dh.mpy      # onboard accelerometer: shake -> dizzy, face-down -> nap
 
 # Built-in to CircuitPython 9.x core (no separate install needed):
-#   displayio, terminalio, json, time, board, busio, digitalio
+#   displayio, terminalio, json, time, board, busio, digitalio, microcontroller
+
+# The pet font + animation engine (glyphs.py / buddy.py / pets/) are pure
+# CircuitPython in this repo — no extra bundle libraries needed.

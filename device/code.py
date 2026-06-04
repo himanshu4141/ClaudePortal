@@ -9,8 +9,8 @@ import adafruit_connection_manager
 import adafruit_minimqtt.adafruit_minimqtt as MQTT
 
 from display import ScreenRotator, make_display
-from moods import MoodController
-from screens import SessionScreen, WaitingScreen, WeekLimitScreen
+from buddy_controller import BuddyController
+from screens import BuddyScreen, WaitingScreen, WeekLimitScreen
 from secrets import secrets
 
 BROKER = "io.adafruit.com"
@@ -27,9 +27,10 @@ _spi = busio.SPI(board.SCK, board.MOSI, board.MISO)
 _esp = adafruit_esp32spi.ESP_SPIcontrol(_spi, _esp32_cs, _esp32_ready, _esp32_reset)
 
 display = make_display()
-screens = [SessionScreen(), WeekLimitScreen()]
+buddy_screen = BuddyScreen()
+screens = [buddy_screen, WeekLimitScreen()]
 rotator = ScreenRotator(display, screens, waiting_screen=WaitingScreen())
-mood = MoodController(rotator.current_index, screens)
+controller = BuddyController(buddy_screen)
 
 
 def connect_wifi():
@@ -78,7 +79,7 @@ def _on_message(_client, topic, message):
         return
     summarize(snapshot)
     rotator.update_snapshot(snapshot)
-    mood.update_snapshot(snapshot)
+    controller.update_snapshot(snapshot)
 
 
 def summarize(snapshot):
@@ -115,9 +116,10 @@ def run():
             mqtt_client.connect()
             retry_delay = RETRY_BASE_SECONDS
             while True:
-                mqtt_client.loop(timeout=1)
+                # short poll so the pet animates smoothly (~10 fps) between msgs
+                mqtt_client.loop(timeout=0.1)
                 rotator.tick()
-                mood.tick()
+                controller.tick()
         except Exception as exc:  # noqa: BLE001 - top-level guard so the board never wedges
             print("loop: crashed type={} err={}".format(type(exc).__name__, exc))
             print("loop: retrying in {}s".format(retry_delay))
