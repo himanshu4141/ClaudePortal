@@ -18,6 +18,9 @@ def discover_jsonl_files(root: Path | None = None) -> Iterator[Path]:
 
 
 def parse_file(path: Path) -> Iterator[UsageEvent]:
+    # Claude Code writes each assistant message 2-5× to the JSONL (same message.id,
+    # slightly different timestamps). Deduplicate on message.id within each file.
+    seen_message_ids: set[str] = set()
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -27,6 +30,12 @@ def parse_file(path: Path) -> Iterator[UsageEvent]:
                 data = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if data.get("type") == "assistant":
+                msg_id = (data.get("message") or {}).get("id", "")
+                if msg_id:
+                    if msg_id in seen_message_ids:
+                        continue
+                    seen_message_ids.add(msg_id)
             event = _to_event(data, path)
             if event is not None:
                 yield event
