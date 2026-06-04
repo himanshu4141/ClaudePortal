@@ -14,7 +14,7 @@ source .venv/bin/activate
 pip install -e .[dev]
 ```
 
-## Parse usage events (PR 2)
+## Parse usage events
 
 Dump every parsed event as one JSON object per line:
 
@@ -28,18 +28,18 @@ Point at a different root for testing:
 python -m claude_portal --root /path/to/fake/claude/projects
 ```
 
-## Aggregate to a snapshot (PR 3)
+## Aggregate to a snapshot
 
-Compute the three metric blocks (now / today / week) the device renders:
+Compute the three metric blocks (now / session / week) the device renders:
 
 ```bash
 python -m claude_portal --snapshot
 ```
 
-Outputs JSON with `now`, `today`, and `week` sections — the same shape the
+Outputs JSON with `now`, `session`, and `week` sections — the same shape the
 publisher sends over MQTT.
 
-## Publish to Adafruit IO (PR 4)
+## Publish to Adafruit IO
 
 1. Copy `.env.example` to `.env` and fill in your Adafruit IO username + AIO key.
 2. Send one snapshot and exit (useful for testing):
@@ -55,19 +55,46 @@ publisher sends over MQTT.
 To run it as a background service, see [`deploy/README.md`](deploy/README.md)
 for launchd (macOS) and systemd-user (Linux) templates.
 
-The published payload is a compact JSON document; the device subscribes to
-`{username}/feeds/claude-portal.snapshot` and renders it on the three screens.
+## How session % is computed
+
+The agent aggregates all active Claude Code sessions (all JSONL files modified
+in the last 5 hours) into a single rate-limit view. Key design decisions:
+
+- **Global pool**: Anthropic's 5h rate limit is per API key, shared across all
+  concurrent Claude Code windows. The agent sums tokens across all sessions.
+- **No compact filtering**: a `/compact` command resets the visible conversation
+  context but does **not** reset the underlying rate-limit counter. Pre-compact
+  tokens still count until they age out of the 5h rolling window.
+- **Message-ID deduplication**: Claude Code writes each API response 2–5× to
+  the JSONL. The parser deduplicates on `message.id` to avoid a ~2.8× overcount.
+- **Model weights**: Anthropic counts tokens proportionally to compute cost.
+  Default weights: Opus = 1.67×, Sonnet = 1.0×, Haiku = 0.33×. Override with
+  `OPUS_WEIGHT` / `HAIKU_WEIGHT` in `.env` if you observe a consistent gap
+  vs Claude.ai.
+
+## Calibration
+
+The `CLAUDE_PLAN` env var sets defaults for `SESSION_LIMIT_TOKENS` and
+`WEEK_LIMIT_TOKENS`:
+
+| Plan   | Session limit      | Weekly limit       |
+|--------|--------------------|--------------------|
+| `pro`  | 2,766,000 tokens   | 466,000,000 tokens |
+| `max5` | 13,830,000 tokens  | 2,330,000,000 tokens (est.) |
+| `max20`| 55,320,000 tokens  | 9,320,000,000 tokens (est.) |
+
+Limits are in Sonnet-equivalent tokens (Opus usage is scaled by `OPUS_WEIGHT`
+before comparing). The Pro session limit was calibrated by observing 100% at
+2,765,639 tokens. Max5/Max20 limits are community estimates (5× / 20× Pro).
+
+To calibrate from scratch:
+1. Leave `SESSION_LIMIT_TOKENS` unset and restart the agent.
+2. Note `SESSION tokens=N` in the serial console.
+3. Check Claude.ai's usage panel for the percentage `P`.
+4. Set `SESSION_LIMIT_TOKENS = N / (P / 100)`.
 
 ## Tests
 
 ```bash
 pytest
 ```
-
-## Roadmap
-
-- **PR 2** (this) — JSONL parser
-- **PR 3** — Metrics aggregator (now / today / week)
-- **PR 4** — Adafruit IO MQTT publisher + runner
-
-See the top-level [`README.md`](../README.md) for project context.

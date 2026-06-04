@@ -111,6 +111,22 @@ pip install -r requirements.txt
 cp .env.example .env   # then fill in ADAFRUIT_IO_USERNAME and ADAFRUIT_IO_KEY
 ```
 
+Key `.env` settings:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `CLAUDE_PLAN` | — | `pro`, `max5`, or `max20` — sets session/weekly limits |
+| `SESSION_LIMIT_TOKENS` | 0 (hidden) | Override plan default (Sonnet-equivalent tokens) |
+| `WEEK_LIMIT_TOKENS` | 0 (hidden) | Override plan default |
+| `OPUS_WEIGHT` | `1.67` | Anthropic counts Opus tokens ~1.67× vs Sonnet |
+| `HAIKU_WEIGHT` | `0.33` | Anthropic counts Haiku tokens ~0.33× vs Sonnet |
+| `WEEK_RESET_WEEKDAY` | `4` (Friday) | Day your billing week resets |
+| `WEEK_RESET_HOUR` | `0` | Hour of reset in `WEEK_RESET_TZ` |
+| `WEEK_RESET_TZ` | system tz | IANA timezone for weekly reset |
+
+If the device's session % is consistently lower than Claude.ai when using Opus
+heavily, adjust `OPUS_WEIGHT` — see `agent/README.md` for calibration steps.
+
 ## Troubleshooting
 
 **Board doesn't appear as `CIRCUITPY`**
