@@ -157,6 +157,47 @@ def test_session_resets_at_anchored_to_session_start():
     assert snap.session.window_resets_at == expected
 
 
+def make_boundary(ts: datetime, *, session: str = "s1") -> UsageEvent:
+    return UsageEvent(
+        timestamp=ts,
+        session_id=session,
+        project_path="/tmp/test",
+        model="",
+        input_tokens=0,
+        output_tokens=0,
+        cache_creation_tokens=0,
+        cache_read_tokens=0,
+        is_compact_boundary=True,
+    )
+
+
+def test_session_compact_boundary_resets_window():
+    # Session ran for 70 minutes accumulating tokens, then context was compacted.
+    # Only tokens AFTER the compact_boundary should count (matches Claude.ai).
+    compact_ts = NOW - timedelta(minutes=3)
+    events = [
+        make_event(NOW - timedelta(minutes=70), session="s1", input_tokens=1_500_000),
+        make_boundary(compact_ts, session="s1"),
+        make_event(NOW - timedelta(minutes=2), session="s1", input_tokens=15_000),
+        make_event(NOW - timedelta(minutes=1), session="s1", input_tokens=12_000),
+    ]
+    snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
+    assert snap.session.window_tokens == 27_000   # only post-compaction tokens
+    assert snap.session.window_resets_at == compact_ts + timedelta(hours=5)
+
+
+def test_session_compact_boundary_outside_window_ignored():
+    # If the most recent compact_boundary is older than 5h, it's outside the window
+    # and the normal rolling window applies.
+    old_boundary = NOW - timedelta(hours=6)
+    events = [
+        make_boundary(old_boundary, session="s1"),
+        make_event(NOW - timedelta(hours=1), session="s1", input_tokens=500_000),
+    ]
+    snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
+    assert snap.session.window_tokens == 500_000  # normal rolling window
+
+
 def test_session_synthetic_events_counted_normally():
     # <synthetic> model appears constantly during Claude Code tool-use; it is NOT
     # a rate-limit signal and should be counted like any other event.

@@ -12,6 +12,7 @@ class UsageEvent:
     output_tokens: int
     cache_creation_tokens: int
     cache_read_tokens: int
+    is_compact_boundary: bool = False  # True for compact_boundary system events
 
     @property
     def total_tokens(self) -> int:

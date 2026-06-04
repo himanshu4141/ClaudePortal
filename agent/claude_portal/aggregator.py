@@ -121,24 +121,34 @@ def _compute_session(
     window_start = now - WINDOW_DURATION
 
     # Select the currently active session: the one whose most recent REAL-MODEL event
-    # is newest. Walking backwards through time-sorted events, we skip synthetic events
-    # (model name in angle brackets, e.g. "<synthetic>") because:
-    #   - <synthetic> appears constantly for tool-use processing (not rate-limit only)
-    #   - when a session hits the rate limit its recent events are all synthetic, so a
-    #     fresh new session (with real-model events) should win instead
-    # Fall back to the absolute latest event if every event is synthetic.
+    # is newest. We skip compact_boundary markers (zero-token) and synthetic events
+    # (model in angle brackets) — those are tool-processing noise, not user activity.
     current_session_id: str | None = None
     if events:
         ref = next(
-            (e for e in reversed(events) if not (e.model and e.model.startswith("<"))),
+            (e for e in reversed(events)
+             if not e.is_compact_boundary
+             and not (e.model and e.model.startswith("<"))),
             events[-1],
         )
         current_session_id = ref.session_id
 
-    # Count events in the 5h rolling window for the selected session.
+    # Find the effective window start. A compact_boundary system event marks when
+    # Claude Code compacted the context — Anthropic resets the session rate-limit
+    # counter at this point, so we should too.
+    effective_start = window_start
+    for e in reversed(events):
+        if e.session_id == current_session_id and e.is_compact_boundary:
+            if e.timestamp > window_start:
+                effective_start = e.timestamp
+            break  # only the most recent boundary matters
+
+    # Count events in the effective window (compact_boundary markers excluded from sum).
     window_events = [
         e for e in events
-        if e.timestamp >= window_start and e.session_id == current_session_id
+        if e.timestamp >= effective_start
+        and e.session_id == current_session_id
+        and not e.is_compact_boundary
     ]
     w_input  = sum(e.input_tokens            for e in window_events)
     w_output = sum(e.output_tokens           for e in window_events)
@@ -157,20 +167,18 @@ def _compute_session(
     # 0min for any session that has been continuously active for a full 5h cycle.
     resets_at = None
     if current_session_id is not None:
-        # session_start = first-ever event for this session (may be older than 5h window)
-        session_start = min(
+        # Anchor reset time to: compact_boundary timestamp if one exists (most accurate),
+        # otherwise the session's own first event (matches Claude.ai's "resets in X").
+        # Falls back to rolling oldest-event + 5h for sessions older than 5h.
+        anchor = effective_start if effective_start > window_start else min(
             (e.timestamp for e in events if e.session_id == current_session_id),
             default=None,
         )
-        if session_start is not None:
-            candidate = session_start + WINDOW_DURATION
+        if anchor is not None:
+            candidate = anchor + WINDOW_DURATION
             if candidate > now:
-                # Session started within the last 5h: use session_start + 5h.
-                # This matches Claude.ai's "resets in X" which shows when the session's
-                # allocation window expires, not when an individual token ages out.
                 resets_at = candidate
             elif window_events:
-                # Session is older than 5h; fall back to rolling oldest-event anchor.
                 resets_at = min(e.timestamp for e in window_events) + WINDOW_DURATION
 
     return SessionMetrics(
