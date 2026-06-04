@@ -120,66 +120,33 @@ def _compute_session(
 ) -> SessionMetrics:
     window_start = now - WINDOW_DURATION
 
-    # Select the currently active session: the one whose most recent REAL-MODEL event
-    # is newest. We skip compact_boundary markers (zero-token) and synthetic events
-    # (model in angle brackets) — those are tool-processing noise, not user activity.
-    current_session_id: str | None = None
-    if events:
-        ref = next(
-            (e for e in reversed(events)
-             if not e.is_compact_boundary
-             and not (e.model and e.model.startswith("<"))),
-            events[-1],
-        )
-        current_session_id = ref.session_id
-
-    # Find the effective window start. A compact_boundary system event marks when
-    # Claude Code compacted the context — Anthropic resets the session rate-limit
-    # counter at this point, so we should too.
-    effective_start = window_start
-    for e in reversed(events):
-        if e.session_id == current_session_id and e.is_compact_boundary:
-            if e.timestamp > window_start:
-                effective_start = e.timestamp
-            break  # only the most recent boundary matters
-
-    # Count events in the effective window (compact_boundary markers excluded from sum).
+    # Aggregate tokens across ALL sessions in the 5h rolling window.
+    # Anthropic's rate-limit is per-API-key: all concurrent Claude Code sessions
+    # share one pool. compact_boundary resets the visible context window for a
+    # conversation but does NOT reset the underlying token-consumption counter —
+    # those tokens still count toward the 5h limit until they age out naturally.
     window_events = [
         e for e in events
-        if e.timestamp >= effective_start
-        and e.session_id == current_session_id
-        and not e.is_compact_boundary
+        if not e.is_compact_boundary
+        and e.timestamp >= window_start
     ]
+
     w_input  = sum(e.input_tokens            for e in window_events)
     w_output = sum(e.output_tokens           for e in window_events)
     w_cw     = sum(e.cache_creation_tokens   for e in window_events)
     w_cr     = sum(e.cache_read_tokens       for e in window_events)
-    # usage_tokens = input+output+cache_creation; cache reads excluded (~10× cheaper,
-    # not counted toward Anthropic's session rate limit)
     window_tokens = w_input + w_output + w_cw
     pct = 100.0 * window_tokens / window_limit_tokens if window_limit_tokens else 0.0
     pct = min(pct, 100.0)
 
-    # Reset time: anchor to the session's own start (first-ever event for this
-    # session_id), not the oldest event currently in the rolling window.
-    # "session_start + 5h" = when this session's Anthropic allocation window expires,
-    # which matches Claude.ai's display. "oldest_event_in_window + 5h" degrades to
-    # 0min for any session that has been continuously active for a full 5h cycle.
+    # Reset time: when does the oldest currently-counted token expire?
+    # That is: oldest_event_in_aggregate_window + 5h.
     resets_at = None
-    if current_session_id is not None:
-        # Anchor reset time to: compact_boundary timestamp if one exists (most accurate),
-        # otherwise the session's own first event (matches Claude.ai's "resets in X").
-        # Falls back to rolling oldest-event + 5h for sessions older than 5h.
-        anchor = effective_start if effective_start > window_start else min(
-            (e.timestamp for e in events if e.session_id == current_session_id),
-            default=None,
-        )
-        if anchor is not None:
-            candidate = anchor + WINDOW_DURATION
-            if candidate > now:
-                resets_at = candidate
-            elif window_events:
-                resets_at = min(e.timestamp for e in window_events) + WINDOW_DURATION
+    if window_events:
+        oldest = min(e.timestamp for e in window_events)
+        candidate = oldest + WINDOW_DURATION
+        if candidate > now:
+            resets_at = candidate
 
     return SessionMetrics(
         window_tokens=window_tokens,

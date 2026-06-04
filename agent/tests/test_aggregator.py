@@ -132,16 +132,16 @@ def test_session_token_breakdown():
     assert snap.session.window_tokens == 60  # 10+20+30
 
 
-def test_session_scoped_to_current_session_id():
-    # Old session (S1) near 100%, new session (S2) just started.
-    # S2 was started more recently (newer first-event) so it wins.
+def test_session_aggregates_all_sessions():
+    # Concurrent sessions (S1 old, S2 new) both contribute to the rate-limit pool.
+    # Anthropic's 5h limit is per-API-key, not per conversation.
     events = [
         make_event(NOW - timedelta(hours=3), session="s_old", input_tokens=2_700_000),
         make_event(NOW - timedelta(minutes=30), session="s_new", input_tokens=500_000),
     ]
     snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
-    assert snap.session.window_tokens == 500_000
-    assert snap.session.window_pct == round(500_000 / 2_766_000 * 100, 1)
+    assert snap.session.window_tokens == 3_200_000  # both sessions aggregated
+    assert snap.session.window_pct == 100.0          # capped at 100%
 
 
 def test_session_resets_at_anchored_to_session_start():
@@ -171,9 +171,9 @@ def make_boundary(ts: datetime, *, session: str = "s1") -> UsageEvent:
     )
 
 
-def test_session_compact_boundary_resets_window():
-    # Session ran for 70 minutes accumulating tokens, then context was compacted.
-    # Only tokens AFTER the compact_boundary should count (matches Claude.ai).
+def test_session_compact_boundary_tokens_included_in_aggregate():
+    # Compact resets the visible conversation context but NOT the API rate-limit pool.
+    # All tokens in the 5h window (before AND after compact) count toward the global limit.
     compact_ts = NOW - timedelta(minutes=3)
     events = [
         make_event(NOW - timedelta(minutes=70), session="s1", input_tokens=1_500_000),
@@ -182,20 +182,19 @@ def test_session_compact_boundary_resets_window():
         make_event(NOW - timedelta(minutes=1), session="s1", input_tokens=12_000),
     ]
     snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
-    assert snap.session.window_tokens == 27_000   # only post-compaction tokens
-    assert snap.session.window_resets_at == compact_ts + timedelta(hours=5)
+    assert snap.session.window_tokens == 1_527_000  # all tokens including pre-compact
 
 
 def test_session_compact_boundary_outside_window_ignored():
-    # If the most recent compact_boundary is older than 5h, it's outside the window
-    # and the normal rolling window applies.
+    # A compact_boundary older than 5h is outside the window; the rolling 5h window
+    # includes all events within the last 5h regardless of compact status.
     old_boundary = NOW - timedelta(hours=6)
     events = [
         make_boundary(old_boundary, session="s1"),
         make_event(NOW - timedelta(hours=1), session="s1", input_tokens=500_000),
     ]
     snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
-    assert snap.session.window_tokens == 500_000  # normal rolling window
+    assert snap.session.window_tokens == 500_000
 
 
 def test_session_synthetic_events_counted_normally():
@@ -213,32 +212,32 @@ def test_session_synthetic_events_counted_normally():
     assert snap.session.window_resets_at == (NOW - timedelta(hours=1)) + timedelta(hours=5)
 
 
-def test_session_picks_most_recently_active_real_model_session():
-    # s_old has real-model activity most recently (5s ago), s_new has slightly older activity.
-    # s_old wins because it has the most recent real event — it IS the active session.
+def test_session_aggregates_multi_session_with_latest_event():
+    # Aggregate: tokens from all sessions in 5h window are summed.
+    # The % reflects total rate-limit consumption across all concurrent sessions.
     events = [
         make_event(NOW - timedelta(hours=4), session="s_old", input_tokens=500_000),
         make_event(NOW - timedelta(minutes=30), session="s_new", input_tokens=300_000),
         make_event(NOW - timedelta(seconds=5), session="s_old", input_tokens=1_000),
     ]
     snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
-    assert snap.session.window_tokens == 501_000  # s_old wins (latest real event)
+    assert snap.session.window_tokens == 801_000  # both sessions aggregated
 
 
-def test_session_skips_synthetic_to_find_real_session():
-    # s_old hit the rate limit (only synthetic events remain).
-    # s_new started fresh with real-model events.
-    # Latest non-synthetic event belongs to s_new, so s_new wins.
+def test_session_aggregates_including_synthetic_events():
+    # <synthetic> events count toward aggregate just like real model events.
+    # Both sessions contribute to the total rate-limit pool.
     events = [
         make_event(NOW - timedelta(hours=4), session="s_old",
                    model="claude-sonnet-4-6", input_tokens=2_700_000),
         make_event(NOW - timedelta(minutes=30), session="s_new",
                    model="claude-sonnet-4-6", input_tokens=300_000),
         make_event(NOW - timedelta(seconds=5), session="s_old",
-                   model="<synthetic>", input_tokens=1_000),  # rate-limited, synthetic
+                   model="<synthetic>", input_tokens=1_000),
     ]
     snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
-    assert snap.session.window_tokens == 300_000  # s_new, not rate-limited s_old
+    assert snap.session.window_tokens == 3_001_000  # all three events aggregated
+    assert snap.session.window_pct == 100.0          # capped
 
 
 def test_session_pct_zero_when_limit_not_configured():
