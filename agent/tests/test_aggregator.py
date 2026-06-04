@@ -6,7 +6,7 @@ from claude_portal.aggregator import aggregate
 from claude_portal.models import UsageEvent
 
 UTC = timezone.utc
-NOW = datetime(2026, 5, 14, 12, 0, tzinfo=UTC)  # Thursday noon
+NOW = datetime(2026, 5, 14, 12, 0, tzinfo=UTC)  # Thursday noon UTC
 
 
 def make_event(
@@ -35,10 +35,11 @@ def test_aggregate_empty_returns_zero_snapshot():
     snap = aggregate([], now=NOW, tz=UTC)
     assert snap.now.active is False
     assert snap.now.session_tokens == 0
-    assert snap.today.total_tokens == 0
-    assert snap.today.window_pct == 0.0
+    assert snap.session.window_tokens == 0
+    assert snap.session.window_pct == 0.0
     assert snap.week.total_tokens == 0
-    assert snap.week.per_day_tokens == [0] * 7
+    assert snap.week.window_pct == 0.0
+    assert snap.week.resets_at is not None
 
 
 def test_now_active_when_latest_within_threshold():
@@ -79,76 +80,230 @@ def test_now_tokens_per_minute_uses_5min_window():
     assert snap.now.tokens_per_minute == 120.0  # 600 / 5
 
 
-def test_today_window_pct_against_limit():
+def test_session_window_pct_against_limit():
     events = [make_event(NOW - timedelta(hours=1), input_tokens=2_000_000)]
     snap = aggregate(events, now=NOW, window_limit_tokens=20_000_000, tz=UTC)
-    assert snap.today.window_tokens == 2_000_000
-    assert snap.today.window_pct == 10.0
+    assert snap.session.window_tokens == 2_000_000
+    assert snap.session.window_pct == 10.0
 
 
-def test_today_window_pct_capped_at_100():
+def test_session_window_pct_capped_at_100():
     events = [make_event(NOW - timedelta(hours=1), input_tokens=50_000_000)]
     snap = aggregate(events, now=NOW, window_limit_tokens=20_000_000, tz=UTC)
-    assert snap.today.window_pct == 100.0
+    assert snap.session.window_pct == 100.0
 
 
-def test_today_excludes_events_outside_5h_window():
+def test_session_excludes_events_outside_5h_window():
     events = [
         make_event(NOW - timedelta(hours=10), input_tokens=999_999),
         make_event(NOW - timedelta(hours=1), input_tokens=500_000),
     ]
     snap = aggregate(events, now=NOW, window_limit_tokens=20_000_000, tz=UTC)
-    assert snap.today.window_tokens == 500_000
+    assert snap.session.window_tokens == 500_000
 
 
-def test_today_cost_estimate_sonnet():
-    today_morning = NOW.replace(hour=10)
+def test_session_excludes_cache_read_tokens_from_window_count():
+    events = [make_event(
+        NOW - timedelta(hours=1),
+        input_tokens=100,
+        output_tokens=200,
+        cache_creation_tokens=300,
+        cache_read_tokens=1_000_000,  # large but excluded
+    )]
+    snap = aggregate(events, now=NOW, window_limit_tokens=10_000, tz=UTC)
+    assert snap.session.window_tokens == 600        # 100+200+300
+    assert snap.session.window_cache_read_tokens == 1_000_000
+    assert snap.session.window_pct == 6.0           # 600/10000
+
+
+def test_session_token_breakdown():
+    events = [make_event(
+        NOW - timedelta(hours=1),
+        input_tokens=10,
+        output_tokens=20,
+        cache_creation_tokens=30,
+        cache_read_tokens=40,
+    )]
+    snap = aggregate(events, now=NOW, tz=UTC)
+    assert snap.session.window_input_tokens == 10
+    assert snap.session.window_output_tokens == 20
+    assert snap.session.window_cache_creation_tokens == 30
+    assert snap.session.window_cache_read_tokens == 40
+    assert snap.session.window_tokens == 60  # 10+20+30
+
+
+def test_session_aggregates_all_sessions():
+    # Concurrent sessions (S1 old, S2 new) both contribute to the rate-limit pool.
+    # Anthropic's 5h limit is per-API-key, not per conversation.
     events = [
-        make_event(
-            today_morning,
-            model="claude-sonnet-4-6",
-            input_tokens=1_000_000,
-            output_tokens=1_000_000,
-        )
+        make_event(NOW - timedelta(hours=3), session="s_old", input_tokens=2_700_000),
+        make_event(NOW - timedelta(minutes=30), session="s_new", input_tokens=500_000),
+    ]
+    snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
+    assert snap.session.window_tokens == 3_200_000  # both sessions aggregated
+    assert snap.session.window_pct == 100.0          # capped at 100%
+
+
+def test_session_resets_at_anchored_to_session_start():
+    # Reset time = session_start + 5h, regardless of where events are in the window.
+    # This matches Claude.ai's "resets in X" which shows when the session's allocation
+    # window expires, not when the oldest individual token expires.
+    events = [
+        make_event(NOW - timedelta(hours=1, minutes=6), session="s1", input_tokens=500_000),
+        make_event(NOW - timedelta(minutes=30), session="s1", input_tokens=300_000),
     ]
     snap = aggregate(events, now=NOW, tz=UTC)
-    assert abs(snap.today.estimated_cost_usd - 18.00) < 0.01  # 3 + 15
+    expected = (NOW - timedelta(hours=1, minutes=6)) + timedelta(hours=5)
+    assert snap.session.window_resets_at == expected
 
 
-def test_today_cost_estimate_opus():
-    today_morning = NOW.replace(hour=10)
+def make_boundary(ts: datetime, *, session: str = "s1") -> UsageEvent:
+    return UsageEvent(
+        timestamp=ts,
+        session_id=session,
+        project_path="/tmp/test",
+        model="",
+        input_tokens=0,
+        output_tokens=0,
+        cache_creation_tokens=0,
+        cache_read_tokens=0,
+        is_compact_boundary=True,
+    )
+
+
+def test_session_compact_boundary_tokens_included_in_aggregate():
+    # Compact resets the visible conversation context but NOT the API rate-limit pool.
+    # All tokens in the 5h window (before AND after compact) count toward the global limit.
+    compact_ts = NOW - timedelta(minutes=3)
     events = [
-        make_event(
-            today_morning,
-            model="claude-opus-4-7",
-            input_tokens=1_000_000,
-            output_tokens=1_000_000,
-        )
+        make_event(NOW - timedelta(minutes=70), session="s1", input_tokens=1_500_000),
+        make_boundary(compact_ts, session="s1"),
+        make_event(NOW - timedelta(minutes=2), session="s1", input_tokens=15_000),
+        make_event(NOW - timedelta(minutes=1), session="s1", input_tokens=12_000),
+    ]
+    snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
+    assert snap.session.window_tokens == 1_527_000  # all tokens including pre-compact
+
+
+def test_session_compact_boundary_outside_window_ignored():
+    # A compact_boundary older than 5h is outside the window; the rolling 5h window
+    # includes all events within the last 5h regardless of compact status.
+    old_boundary = NOW - timedelta(hours=6)
+    events = [
+        make_boundary(old_boundary, session="s1"),
+        make_event(NOW - timedelta(hours=1), session="s1", input_tokens=500_000),
+    ]
+    snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
+    assert snap.session.window_tokens == 500_000
+
+
+def test_session_synthetic_events_counted_normally():
+    # <synthetic> model appears constantly during Claude Code tool-use; it is NOT
+    # a rate-limit signal and should be counted like any other event.
+    events = [
+        make_event(NOW - timedelta(hours=1), session="s1",
+                   model="<synthetic>", input_tokens=50_000),
+        make_event(NOW - timedelta(minutes=30), session="s1",
+                   model="claude-sonnet-4-6", input_tokens=300_000),
     ]
     snap = aggregate(events, now=NOW, tz=UTC)
-    assert abs(snap.today.estimated_cost_usd - 90.00) < 0.01  # 15 + 75
+    assert snap.session.window_tokens == 350_000
+    # session started 1h ago → resets in 4h
+    assert snap.session.window_resets_at == (NOW - timedelta(hours=1)) + timedelta(hours=5)
 
 
-def test_week_per_day_breakdown():
+def test_session_aggregates_multi_session_with_latest_event():
+    # Aggregate: tokens from all sessions in 5h window are summed.
+    # The % reflects total rate-limit consumption across all concurrent sessions.
+    events = [
+        make_event(NOW - timedelta(hours=4), session="s_old", input_tokens=500_000),
+        make_event(NOW - timedelta(minutes=30), session="s_new", input_tokens=300_000),
+        make_event(NOW - timedelta(seconds=5), session="s_old", input_tokens=1_000),
+    ]
+    snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
+    assert snap.session.window_tokens == 801_000  # both sessions aggregated
+
+
+def test_session_aggregates_including_synthetic_events():
+    # <synthetic> events count toward aggregate just like real model events.
+    # Both sessions contribute to the total rate-limit pool.
+    events = [
+        make_event(NOW - timedelta(hours=4), session="s_old",
+                   model="claude-sonnet-4-6", input_tokens=2_700_000),
+        make_event(NOW - timedelta(minutes=30), session="s_new",
+                   model="claude-sonnet-4-6", input_tokens=300_000),
+        make_event(NOW - timedelta(seconds=5), session="s_old",
+                   model="<synthetic>", input_tokens=1_000),
+    ]
+    snap = aggregate(events, now=NOW, window_limit_tokens=2_766_000, tz=UTC)
+    assert snap.session.window_tokens == 3_001_000  # all three events aggregated
+    assert snap.session.window_pct == 100.0          # capped
+
+
+def test_session_pct_zero_when_limit_not_configured():
+    events = [make_event(NOW - timedelta(hours=1), input_tokens=1_000_000)]
+    snap = aggregate(events, now=NOW, tz=UTC, window_limit_tokens=0)
+    assert snap.session.window_pct == 0.0
+
+
+def test_window_resets_at_skips_isolated_old_cluster():
+    # Old cluster (3h ago) followed by a 2h50min gap then recent activity.
+    # resets_at anchors to the current cluster start, not the stale old event.
+    recent = NOW - timedelta(minutes=10)
+    events = [
+        make_event(NOW - timedelta(hours=3), input_tokens=100),
+        make_event(recent, input_tokens=200),
+    ]
+    snap = aggregate(events, now=NOW, tz=UTC)
+    assert snap.session.window_resets_at == recent + timedelta(hours=5)
+
+
+def test_window_resets_at_is_oldest_when_no_large_gap():
+    # Continuous activity (all gaps < 1h): use the absolute oldest event as anchor.
+    oldest = NOW - timedelta(hours=3)
+    events = [
+        make_event(oldest, input_tokens=100),
+        make_event(NOW - timedelta(hours=2, minutes=30), input_tokens=50),
+        make_event(NOW - timedelta(hours=2, minutes=10), input_tokens=200),
+    ]
+    snap = aggregate(events, now=NOW, tz=UTC)
+    assert snap.session.window_resets_at == oldest + timedelta(hours=5)
+
+
+# NOW = Thursday 2026-05-14 12:00 UTC, default week resets Friday midnight UTC.
+# Most recent Friday midnight UTC = 2026-05-08 00:00 UTC.
+# Next Friday midnight UTC = 2026-05-15 00:00 UTC.
+
+def test_week_counts_events_since_last_reset():
     events = [
         make_event(NOW - timedelta(days=6, hours=2), input_tokens=100),
         make_event(NOW - timedelta(days=2, hours=1), input_tokens=200),
         make_event(NOW - timedelta(hours=1), input_tokens=300),
     ]
     snap = aggregate(events, now=NOW, tz=UTC)
-    assert snap.week.per_day_tokens[0] == 100
-    assert snap.week.per_day_tokens[4] == 200
-    assert snap.week.per_day_tokens[6] == 300
     assert snap.week.total_tokens == 600
 
 
-def test_week_drops_events_older_than_seven_days():
+def test_week_drops_events_before_last_reset():
     events = [
-        make_event(NOW - timedelta(days=8), input_tokens=9999),
+        make_event(NOW - timedelta(days=8), input_tokens=9999),  # before May 8 reset
         make_event(NOW - timedelta(hours=1), input_tokens=100),
     ]
     snap = aggregate(events, now=NOW, tz=UTC)
     assert snap.week.total_tokens == 100
+
+
+def test_week_excludes_cache_reads_from_total():
+    events = [make_event(
+        NOW - timedelta(hours=1),
+        input_tokens=100,
+        output_tokens=200,
+        cache_creation_tokens=300,
+        cache_read_tokens=5_000_000,  # large but excluded
+    )]
+    snap = aggregate(events, now=NOW, tz=UTC)
+    assert snap.week.total_tokens == 600
+    assert snap.week.cache_read_tokens == 5_000_000
 
 
 def test_week_model_split_opus_vs_sonnet():
@@ -163,18 +318,36 @@ def test_week_model_split_opus_vs_sonnet():
     assert snap.week.sonnet_pct == 70.0
 
 
-def test_week_labels_are_seven_day_initials_ending_today():
+def test_week_resets_at_is_next_friday_midnight_utc():
     snap = aggregate([], now=NOW, tz=UTC)
-    assert len(snap.week.per_day_labels) == 7
-    # Thursday is "T", so labels end with "T" for 2026-05-14
-    assert snap.week.per_day_labels[-1] == "T"
+    expected = datetime(2026, 5, 15, 0, 0, tzinfo=UTC)
+    assert snap.week.resets_at == expected
 
 
-def test_window_resets_at_is_oldest_in_window_plus_5h():
-    oldest = NOW - timedelta(hours=3)
-    events = [
-        make_event(oldest, input_tokens=100),
-        make_event(NOW - timedelta(minutes=10), input_tokens=200),
-    ]
-    snap = aggregate(events, now=NOW, tz=UTC)
-    assert snap.today.window_resets_at == oldest + timedelta(hours=5)
+def test_week_window_pct_against_configured_limit():
+    events = [make_event(NOW - timedelta(hours=1), input_tokens=1_400_000)]
+    snap = aggregate(events, now=NOW, tz=UTC, week_limit_tokens=10_000_000)
+    assert snap.week.window_pct == 14.0
+
+
+def test_week_window_pct_zero_when_limit_not_configured():
+    events = [make_event(NOW - timedelta(hours=1), input_tokens=1_000_000)]
+    snap = aggregate(events, now=NOW, tz=UTC, week_limit_tokens=0)
+    assert snap.week.window_pct == 0.0
+
+
+def test_week_respects_custom_reset_hour_and_tz():
+    from zoneinfo import ZoneInfo
+    dublin = ZoneInfo("Europe/Dublin")
+    snap = aggregate([], now=NOW, tz=UTC, week_reset_weekday=4, week_reset_hour=9, week_reset_tz=dublin)
+    expected = datetime(2026, 5, 15, 8, 0, tzinfo=UTC)
+    assert snap.week.resets_at == expected
+
+
+def test_week_reset_on_friday_before_reset_hour_stays_in_previous_week():
+    from zoneinfo import ZoneInfo
+    dublin = ZoneInfo("Europe/Dublin")
+    before_reset = datetime(2026, 5, 15, 7, 30, tzinfo=UTC)
+    snap = aggregate([], now=before_reset, tz=UTC, week_reset_weekday=4, week_reset_hour=9, week_reset_tz=dublin)
+    expected = datetime(2026, 5, 15, 8, 0, tzinfo=UTC)
+    assert snap.week.resets_at == expected

@@ -32,6 +32,21 @@ def short_model(model):
     return model[:8].upper()
 
 
+def format_countdown(minutes):
+    if minutes is None or minutes < 0:
+        return "?"
+    minutes = int(minutes)
+    if minutes >= 24 * 60:
+        days = minutes // (24 * 60)
+        hours = (minutes % (24 * 60)) // 60
+        return "{}d {}h".format(days, hours)
+    if minutes >= 60:
+        hours = minutes // 60
+        mins = minutes % 60
+        return "{}h {}m".format(hours, mins)
+    return "{}m".format(minutes)
+
+
 def format_duration(minutes):
     if minutes is None or minutes < 0:
         return ""

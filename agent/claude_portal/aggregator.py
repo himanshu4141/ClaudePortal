@@ -10,14 +10,7 @@ ACTIVE_THRESHOLD = timedelta(minutes=5)
 WINDOW_DURATION = timedelta(hours=5)
 RATE_WINDOW = timedelta(minutes=5)
 WEEK_DAYS = 7
-DEFAULT_WINDOW_LIMIT_TOKENS = 20_000_000
-
-# USD per 1M tokens. Approximate Pro/Max pricing for cost-equivalent display.
-PRICING_PER_MILLION = {
-    "opus":   {"in": 15.00, "out": 75.00, "cache_w": 18.75, "cache_r": 1.50},
-    "sonnet": {"in":  3.00, "out": 15.00, "cache_w":  3.75, "cache_r": 0.30},
-}
-DEFAULT_PRICING = PRICING_PER_MILLION["sonnet"]
+DEFAULT_WINDOW_LIMIT_TOKENS = 0  # configure via SESSION_LIMIT_TOKENS env var
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,30 +25,37 @@ class NowMetrics:
 
 
 @dataclass(frozen=True, slots=True)
-class TodayMetrics:
-    total_tokens: int
-    estimated_cost_usd: float
-    window_tokens: int
-    window_pct: float
+class SessionMetrics:
+    """5-hour rolling window (Anthropic's rate-limit unit)."""
+    window_tokens: int               # in+out+cw; cache_read excluded (10× cheaper, not counted)
+    window_input_tokens: int
+    window_output_tokens: int
+    window_cache_creation_tokens: int
+    window_cache_read_tokens: int
+    window_pct: float                # % of limit used; 0.0 when limit not configured
     window_resets_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True)
 class WeekMetrics:
-    total_tokens: int
-    per_day_tokens: list[int]
-    per_day_labels: list[str]
+    total_tokens: int                # in+out+cw (usage_tokens, excl. cache reads)
+    input_tokens: int
+    output_tokens: int
+    cache_creation_tokens: int
+    cache_read_tokens: int
     opus_tokens: int
     sonnet_tokens: int
     opus_pct: float
     sonnet_pct: float
+    window_pct: float                # % of weekly limit; 0.0 when limit not configured
+    resets_at: datetime              # next week reset (UTC)
 
 
 @dataclass(frozen=True, slots=True)
 class Snapshot:
     generated_at: datetime
     now: NowMetrics
-    today: TodayMetrics
+    session: SessionMetrics
     week: WeekMetrics
 
 
@@ -64,16 +64,27 @@ def aggregate(
     now: datetime | None = None,
     window_limit_tokens: int = DEFAULT_WINDOW_LIMIT_TOKENS,
     tz: tzinfo | None = None,
+    week_reset_weekday: int = 4,       # Friday (Mon=0 … Fri=4 … Sun=6)
+    week_reset_hour: int = 0,          # hour-of-day in week_reset_tz
+    week_reset_tz: tzinfo | None = None,
+    week_limit_tokens: int = 0,        # 0 = not configured → window_pct stays 0.0
+    opus_weight: float = 1.67,         # Anthropic rate-limit weight: Opus ≈ 1.67× Sonnet
+    haiku_weight: float = 0.33,        # Anthropic rate-limit weight: Haiku ≈ 0.33× Sonnet
 ) -> Snapshot:
     now = now or datetime.now(timezone.utc)
     if tz is None:
         tz = now.astimezone().tzinfo or timezone.utc
+    if week_reset_tz is None:
+        week_reset_tz = tz
     events_list = sorted(events, key=lambda e: e.timestamp)
     return Snapshot(
         generated_at=now,
         now=_compute_now(events_list, now),
-        today=_compute_today(events_list, now, tz, window_limit_tokens),
-        week=_compute_week(events_list, now, tz),
+        session=_compute_session(events_list, now, window_limit_tokens, opus_weight, haiku_weight),
+        week=_compute_week(
+            events_list, now,
+            week_limit_tokens, week_reset_weekday, week_reset_hour, week_reset_tz,
+        ),
     )
 
 
@@ -104,95 +115,146 @@ def _compute_now(events: list[UsageEvent], now: datetime) -> NowMetrics:
     )
 
 
-def _compute_today(
+def _compute_session(
     events: list[UsageEvent],
     now: datetime,
-    tz: tzinfo,
     window_limit_tokens: int,
-) -> TodayMetrics:
-    today_start = now.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-    today_events = [e for e in events if e.timestamp.astimezone(tz) >= today_start]
-    total = sum(e.total_tokens for e in today_events)
-    cost = sum(_event_cost(e) for e in today_events)
-
+    opus_weight: float = 1.67,
+    haiku_weight: float = 0.33,
+) -> SessionMetrics:
     window_start = now - WINDOW_DURATION
-    window_events = [e for e in events if e.timestamp >= window_start]
-    window_tokens = sum(e.total_tokens for e in window_events)
+
+    # Aggregate tokens across ALL sessions in the 5h rolling window.
+    # Anthropic's rate-limit is per-API-key: all concurrent Claude Code sessions
+    # share one pool. compact_boundary resets the visible context window for a
+    # conversation but does NOT reset the underlying token-consumption counter —
+    # those tokens still count toward the 5h limit until they age out naturally.
+    window_events = [
+        e for e in events
+        if not e.is_compact_boundary
+        and e.timestamp >= window_start
+    ]
+
+    w_input  = sum(e.input_tokens            for e in window_events)
+    w_output = sum(e.output_tokens           for e in window_events)
+    w_cw     = sum(e.cache_creation_tokens   for e in window_events)
+    w_cr     = sum(e.cache_read_tokens       for e in window_events)
+
+    # Apply per-model weights. Anthropic counts tokens proportionally to compute
+    # cost: Opus ≈ 1.67×, Sonnet = 1.0×, Haiku ≈ 0.33× relative to Sonnet.
+    # Override OPUS_WEIGHT / HAIKU_WEIGHT in .env if you need to calibrate.
+    window_tokens = sum(
+        int((e.input_tokens + e.output_tokens + e.cache_creation_tokens)
+            * _model_weight(e.model, opus_weight, haiku_weight))
+        for e in window_events
+    )
+
     pct = 100.0 * window_tokens / window_limit_tokens if window_limit_tokens else 0.0
     pct = min(pct, 100.0)
 
+    # Reset time: when does the oldest currently-counted token expire?
+    # That is: oldest_event_in_aggregate_window + 5h.
+    # Compute resets_at anchored to the start of the CURRENT activity cluster.
+    # When there is a long gap between an old isolated cluster (e.g. from 5h ago)
+    # and the current session, anchoring to the absolute oldest event gives 0min
+    # for the entire duration of the gap-expiry. Instead we skip over any gap
+    # longer than 1h and anchor to the first event of the most recent cluster.
+    # This matches Claude.ai's "resets in X" which reflects the current session.
     resets_at = None
     if window_events:
-        oldest_in_window = min(e.timestamp for e in window_events)
-        resets_at = oldest_in_window + WINDOW_DURATION
+        times = sorted(e.timestamp for e in window_events)
+        anchor = times[0]
+        for i in range(1, len(times)):
+            if times[i] - times[i - 1] > timedelta(hours=1):
+                anchor = times[i]   # jump to start of current cluster
+        candidate = anchor + WINDOW_DURATION
+        if candidate > now:
+            resets_at = candidate
 
-    return TodayMetrics(
-        total_tokens=total,
-        estimated_cost_usd=round(cost, 2),
+    return SessionMetrics(
         window_tokens=window_tokens,
+        window_input_tokens=w_input,
+        window_output_tokens=w_output,
+        window_cache_creation_tokens=w_cw,
+        window_cache_read_tokens=w_cr,
         window_pct=round(pct, 1),
         window_resets_at=resets_at,
     )
 
 
-def _compute_week(events: list[UsageEvent], now: datetime, tz: tzinfo) -> WeekMetrics:
-    today_local = now.astimezone(tz).date()
-    days = [today_local - timedelta(days=WEEK_DAYS - 1 - i) for i in range(WEEK_DAYS)]
-    labels = [d.strftime("%a")[0] for d in days]
-    week_start = datetime.combine(days[0], datetime.min.time(), tzinfo=tz)
+def _compute_week(
+    events: list[UsageEvent],
+    now: datetime,
+    week_limit_tokens: int,
+    week_reset_weekday: int,
+    week_reset_hour: int,
+    week_reset_tz: tzinfo,
+) -> WeekMetrics:
+    # Find the most recent reset moment at or before now.
+    now_in_rtz = now.astimezone(week_reset_tz)
+    days_since = (now_in_rtz.weekday() - week_reset_weekday) % 7
+    last_reset = now_in_rtz.replace(
+        hour=week_reset_hour, minute=0, second=0, microsecond=0
+    ) - timedelta(days=days_since)
+    if last_reset > now_in_rtz:
+        last_reset -= timedelta(days=7)
 
-    per_day = [0] * WEEK_DAYS
-    opus = 0
-    sonnet = 0
+    week_start_utc = last_reset.astimezone(timezone.utc)
+    next_reset_utc = (last_reset + timedelta(days=WEEK_DAYS)).astimezone(timezone.utc)
+
+    w_input = w_output = w_cw = w_cr = 0
+    opus = sonnet = 0
     for e in events:
-        local = e.timestamp.astimezone(tz)
-        if local < week_start:
+        if e.timestamp < week_start_utc:
             continue
-        idx = (local.date() - days[0]).days
-        if not 0 <= idx < WEEK_DAYS:
-            continue
-        per_day[idx] += e.total_tokens
+        w_input  += e.input_tokens
+        w_output += e.output_tokens
+        w_cw     += e.cache_creation_tokens
+        w_cr     += e.cache_read_tokens
         family = _model_family(e.model)
         if family == "opus":
-            opus += e.total_tokens
+            opus += e.usage_tokens
         elif family == "sonnet":
-            sonnet += e.total_tokens
+            sonnet += e.usage_tokens
 
+    total = w_input + w_output + w_cw
     coded = opus + sonnet
     opus_pct = round(100.0 * opus / coded, 1) if coded else 0.0
     sonnet_pct = round(100.0 * sonnet / coded, 1) if coded else 0.0
+    window_pct = round(100.0 * total / week_limit_tokens, 1) if week_limit_tokens else 0.0
+    window_pct = min(window_pct, 100.0)
 
     return WeekMetrics(
-        total_tokens=sum(per_day),
-        per_day_tokens=per_day,
-        per_day_labels=labels,
+        total_tokens=total,
+        input_tokens=w_input,
+        output_tokens=w_output,
+        cache_creation_tokens=w_cw,
+        cache_read_tokens=w_cr,
         opus_tokens=opus,
         sonnet_tokens=sonnet,
         opus_pct=opus_pct,
         sonnet_pct=sonnet_pct,
+        window_pct=window_pct,
+        resets_at=next_reset_utc,
     )
 
 
-def _event_cost(e: UsageEvent) -> float:
-    pricing = _pricing_for_model(e.model)
-    return (
-        e.input_tokens * pricing["in"]
-        + e.output_tokens * pricing["out"]
-        + e.cache_creation_tokens * pricing["cache_w"]
-        + e.cache_read_tokens * pricing["cache_r"]
-    ) / 1_000_000
-
-
-def _pricing_for_model(model: str) -> dict:
-    family = _model_family(model)
-    if family:
-        return PRICING_PER_MILLION[family]
-    return DEFAULT_PRICING
-
-
 def _model_family(model: str) -> str | None:
+    if not model:
+        return None
     if "opus" in model:
         return "opus"
     if "sonnet" in model:
         return "sonnet"
+    if "haiku" in model:
+        return "haiku"
     return None
+
+
+def _model_weight(model: str, opus_weight: float, haiku_weight: float) -> float:
+    family = _model_family(model)
+    if family == "opus":
+        return opus_weight
+    if family == "haiku":
+        return haiku_weight
+    return 1.0  # sonnet and unknown models

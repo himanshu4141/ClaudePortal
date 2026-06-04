@@ -3,8 +3,8 @@
 Real-time Claude Code usage tracker on an Adafruit Matrix Portal M4 with a
 64×32 RGB LED panel. A small laptop agent parses your local `~/.claude`
 session logs and publishes metrics to Adafruit IO over MQTT; the LED panel
-subscribes and renders three rotating screens (now / today / week) with a
-pixel-art mascot.
+subscribes and renders rotating screens with live usage data and a
+pixel-art Claude Code mascot.
 
 ## Hardware
 
@@ -43,16 +43,15 @@ creation, CircuitPython flashing, and library installation.
 
 ## Status
 
-Early development. See PR history for the build progression:
+Functional. Two rotating screens: **SESS** (5-hour window % + reset countdown)
+and **WEEK** (weekly % + next Friday countdown). The pixel-art mascot reacts
+to usage level — sweats when the session window is near full, types or thinks
+while Claude is active, blinks randomly otherwise.
 
-1. Scaffold
-2. JSONL parser
-3. Metrics aggregator
-4. Adafruit IO publisher
-5. Device bootstrap (Wi-Fi + MQTT)
-6. Static screen rotation
-7. Mascot sprites
-8. Animations + mood state machine
+Hardware runs CircuitPython 9.2.x with `adafruit_esp32spi` for Wi-Fi (native
+`wifi`/`socketpool` are not available on the Matrix Portal M4 in CP 9.x).
+MQTT connects to Adafruit IO on port 1883 (non-SSL; the ESP32 co-processor's
+TLS stack is unreliable at this firmware version).
 
 ## License
 

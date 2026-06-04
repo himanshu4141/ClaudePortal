@@ -6,6 +6,7 @@ import os
 import ssl
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
@@ -21,6 +22,26 @@ MAX_PAYLOAD_BYTES = 1024
 
 logger = logging.getLogger(__name__)
 
+# Calibrated against real Pro plan usage (in+out+cache_creation tokens).
+# Pro session: observed limit hit at window_tokens=2,765,639; rounded up to 2,766,000.
+# Pro week: 107,271,806 observed at 23% → 466M limit confirmed.
+# Max5/Max20: assumed 5× / 20× Pro (community calibration data welcome).
+# Override per-field with SESSION_LIMIT_TOKENS / WEEK_LIMIT_TOKENS in .env.
+PLAN_LIMITS: dict[str, dict[str, int]] = {
+    "pro": {
+        "session":   2_766_000,
+        "week":    466_000_000,
+    },
+    "max5": {
+        "session":  13_830_000,   # 5× pro
+        "week":  2_330_000_000,
+    },
+    "max20": {
+        "session":  55_320_000,   # 20× pro
+        "week":  9_320_000_000,
+    },
+}
+
 
 @dataclass
 class PublisherConfig:
@@ -30,6 +51,20 @@ class PublisherConfig:
     host: str = ADAFRUIT_IO_HOST
     port: int = ADAFRUIT_IO_PORT
     interval: int = DEFAULT_INTERVAL_SECONDS
+    session_limit_tokens: int = 0  # 0 = not configured
+    week_reset_weekday: int = 4    # Friday (Mon=0 … Fri=4 … Sun=6)
+    week_reset_hour: int = 0       # hour-of-day in week_reset_tz
+    week_reset_tz: str = ""        # IANA tz name; empty = system local tz
+    week_limit_tokens: int = 0     # 0 = not configured
+    opus_weight: float = 1.67      # Anthropic rate-limit weight: Opus ≈ 1.67× Sonnet
+    haiku_weight: float = 0.33     # Anthropic rate-limit weight: Haiku ≈ 0.33× Sonnet
+
+    @property
+    def week_reset_tzinfo(self):
+        if not self.week_reset_tz:
+            return None
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(self.week_reset_tz)
 
     @classmethod
     def from_env(cls) -> PublisherConfig:
@@ -40,36 +75,68 @@ class PublisherConfig:
                 "ADAFRUIT_IO_USERNAME and ADAFRUIT_IO_KEY must be set "
                 "(see agent/.env.example)"
             )
+        plan = os.environ.get("CLAUDE_PLAN", "").lower().strip()
+        plan_defaults = PLAN_LIMITS.get(plan, {})
+
         return cls(
             username=username,
             key=key,
             feed=os.environ.get("PUBLISHER_FEED", DEFAULT_FEED),
             interval=int(os.environ.get("PUBLISHER_INTERVAL", DEFAULT_INTERVAL_SECONDS)),
+            session_limit_tokens=int(
+                os.environ.get("SESSION_LIMIT_TOKENS", plan_defaults.get("session", 0))
+            ),
+            week_reset_weekday=int(os.environ.get("WEEK_RESET_WEEKDAY", "4")),
+            week_reset_hour=int(os.environ.get("WEEK_RESET_HOUR", "0")),
+            week_reset_tz=os.environ.get("WEEK_RESET_TZ", ""),
+            week_limit_tokens=int(
+                os.environ.get("WEEK_LIMIT_TOKENS", plan_defaults.get("week", 0))
+            ),
+            opus_weight=float(os.environ.get("OPUS_WEIGHT", "1.67")),
+            haiku_weight=float(os.environ.get("HAIKU_WEIGHT", "0.33")),
         )
 
 
+def _minutes_until(dt: datetime | None, now: datetime) -> int | None:
+    if dt is None:
+        return None
+    delta = dt - now
+    return max(0, int(delta.total_seconds() / 60))
+
+
 def snapshot_to_payload(snapshot: Snapshot) -> str:
+    now_ts = snapshot.generated_at
+    s = snapshot.session
+    w = snapshot.week
     return json.dumps(
         {
-            "ts": snapshot.generated_at.isoformat(),
+            "ts": now_ts.isoformat(),
             "now": {
                 "active": snapshot.now.active,
                 "model": snapshot.now.model,
-                "tokens": snapshot.now.session_tokens,
-                "duration_min": snapshot.now.session_duration_minutes,
                 "rate": snapshot.now.tokens_per_minute,
             },
-            "today": {
-                "tokens": snapshot.today.total_tokens,
-                "cost": snapshot.today.estimated_cost_usd,
-                "window_pct": snapshot.today.window_pct,
+            "session": {
+                "window_pct": s.window_pct,
+                "window_tokens": s.window_tokens,
+                "resets_in_min": _minutes_until(s.window_resets_at, now_ts),
+                "tok": {
+                    "in": s.window_input_tokens,
+                    "out": s.window_output_tokens,
+                    "cw": s.window_cache_creation_tokens,
+                    "cr": s.window_cache_read_tokens,
+                },
             },
             "week": {
-                "total": snapshot.week.total_tokens,
-                "days": snapshot.week.per_day_tokens,
-                "labels": snapshot.week.per_day_labels,
-                "opus_pct": snapshot.week.opus_pct,
-                "sonnet_pct": snapshot.week.sonnet_pct,
+                "window_pct": w.window_pct,
+                "resets_in_min": _minutes_until(w.resets_at, now_ts),
+                "total": w.total_tokens,
+                "tok": {
+                    "in": w.input_tokens,
+                    "out": w.output_tokens,
+                    "cw": w.cache_creation_tokens,
+                    "cr": w.cache_read_tokens,
+                },
             },
         },
         separators=(",", ":"),
@@ -130,7 +197,16 @@ def run_loop(
     try:
         i = 0
         while iterations is None or i < iterations:
-            payload = snapshot_to_payload(aggregate(parse_all(root)))
+            payload = snapshot_to_payload(aggregate(
+                parse_all(root),
+                window_limit_tokens=config.session_limit_tokens,
+                week_reset_weekday=config.week_reset_weekday,
+                week_reset_hour=config.week_reset_hour,
+                week_reset_tz=config.week_reset_tzinfo,
+                week_limit_tokens=config.week_limit_tokens,
+                opus_weight=config.opus_weight,
+                haiku_weight=config.haiku_weight,
+            ))
             pub.publish(payload)
             logger.info("published %d bytes to %s", len(payload), pub.topic)
             i += 1

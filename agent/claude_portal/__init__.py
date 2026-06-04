@@ -1,7 +1,7 @@
 from .aggregator import (
     NowMetrics,
+    SessionMetrics,
     Snapshot,
-    TodayMetrics,
     WeekMetrics,
     aggregate,
 )
@@ -28,7 +28,7 @@ __all__ = [
     "parse_all",
     "parse_file",
     "NowMetrics",
-    "TodayMetrics",
+    "SessionMetrics",
     "WeekMetrics",
     "Snapshot",
     "aggregate",

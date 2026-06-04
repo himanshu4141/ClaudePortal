@@ -2,13 +2,7 @@ import displayio
 import terminalio
 from adafruit_display_text import label
 
-from formatting import (
-    PALETTE,
-    bar_color_for_pct,
-    format_duration,
-    format_tokens,
-    short_model,
-)
+from formatting import PALETTE, bar_color_for_pct, format_countdown
 from mascot import (
     CORNER_HEIGHT,
     CORNER_WIDTH,
@@ -19,9 +13,10 @@ from mascot import (
 
 WIDTH = 64
 HEIGHT = 32
-CORNER_X = WIDTH - CORNER_WIDTH
+CORNER_X = WIDTH - CORNER_WIDTH   # 55
 HERO_X = 0
-HERO_Y = (HEIGHT - HERO_HEIGHT) // 2
+HERO_Y = (HEIGHT - HERO_HEIGHT) // 2   # 9
+TEXT_X = HERO_X + 20   # text starts right of the hero
 
 
 class WaitingScreen:
@@ -40,187 +35,97 @@ class WaitingScreen:
         return False
 
 
-class NowScreen:
-    def __init__(self):
-        self.group = displayio.Group()
-        self.hero = make_hero(x=HERO_X, y=HERO_Y)
-        text_x = HERO_X + 20
-        self.model_label = label.Label(terminalio.FONT, text="", color=PALETTE["cream"], x=text_x, y=5)
-        self.tokens_label = label.Label(terminalio.FONT, text="", color=PALETTE["copper"], x=text_x, y=17)
-        self.sub_label = label.Label(terminalio.FONT, text="", color=PALETTE["cream"], x=text_x, y=28)
-        self.group.append(self.hero)
-        self.group.append(self.model_label)
-        self.group.append(self.tokens_label)
-        self.group.append(self.sub_label)
+class _LimitScreen:
+    """Shared layout for session and week limit screens.
 
-    def update_data(self, snapshot):
-        now = (snapshot or {}).get("now") or {}
-        active = now.get("active", False)
-        self.model_label.text = short_model(now.get("model"))
-        self.model_label.color = PALETTE["amber"] if active else PALETTE["cream"]
-        self.tokens_label.text = format_tokens(now.get("tokens") or 0)
-        sub = format_duration(now.get("duration_min") or 0)
-        if active:
-            sub = ("* " + sub) if sub else "*"
-        self.sub_label.text = sub
+    Layout (64×32):
+      y=4   : title label (SESS / WEEK) + corner mascot top-right
+      y=12–15: progress bar (x=TEXT_X to x=62, 4px tall)
+      y=14  : % label right-anchored over bar (white)
+      y=24  : countdown label (amber)
+    """
 
-    def has_hero(self):
-        return True
-
-    def has_corner(self):
-        return False
-
-    def set_hero_frame(self, idx):
-        self.hero[0] = idx
-
-
-class TodayScreen:
-    BAR_WIDTH = 46
+    BAR_X = TEXT_X
+    BAR_WIDTH = WIDTH - TEXT_X - 2   # 42px
     BAR_HEIGHT = 4
-    BAR_X = 2
-    BAR_Y = 22
+    BAR_Y = 12
 
-    def __init__(self):
+    def __init__(self, title: str):
         self.group = displayio.Group()
-        self.corner = make_corner(x=CORNER_X, y=0)
-        self.title = label.Label(terminalio.FONT, text="TODAY", color=PALETTE["cream"], x=2, y=4)
-        self.tokens_label = label.Label(terminalio.FONT, text="", color=PALETTE["copper"], x=2, y=16)
-        self.cost_label = label.Label(terminalio.FONT, text="", color=PALETTE["pink"], x=40, y=16)
-        self.pct_label = label.Label(terminalio.FONT, text="", color=PALETTE["white"], x=50, y=25)
 
+        self.hero = make_hero(x=HERO_X, y=HERO_Y)
+        self.corner = make_corner(x=CORNER_X, y=0)
+
+        self.title_label = label.Label(
+            terminalio.FONT, text=title, color=PALETTE["cream"], x=TEXT_X, y=4,
+        )
         self.bar_bitmap = displayio.Bitmap(self.BAR_WIDTH, self.BAR_HEIGHT, 2)
         self.bar_palette = displayio.Palette(2)
         self.bar_palette[0] = PALETTE["dim"]
         self.bar_palette[1] = PALETTE["amber"]
         self.bar_tile = displayio.TileGrid(
-            self.bar_bitmap, pixel_shader=self.bar_palette, x=self.BAR_X, y=self.BAR_Y
+            self.bar_bitmap, pixel_shader=self.bar_palette,
+            x=self.BAR_X, y=self.BAR_Y,
+        )
+        self.pct_label = label.Label(
+            terminalio.FONT, text="", color=PALETTE["white"],
+            anchor_point=(1.0, 0.5), anchored_position=(62, 14),
+        )
+        self.reset_label = label.Label(
+            terminalio.FONT, text="", color=PALETTE["amber"], x=TEXT_X, y=24,
         )
 
-        self.group.append(self.title)
+        self.group.append(self.hero)
         self.group.append(self.corner)
-        self.group.append(self.tokens_label)
-        self.group.append(self.cost_label)
+        self.group.append(self.title_label)
         self.group.append(self.bar_tile)
         self.group.append(self.pct_label)
+        self.group.append(self.reset_label)
 
-    def update_data(self, snapshot):
-        today = (snapshot or {}).get("today") or {}
-        tokens = today.get("tokens") or 0
-        cost = today.get("cost") or 0
-        pct = max(0, min(100, today.get("window_pct") or 0))
-
-        self.tokens_label.text = format_tokens(tokens)
-        self.cost_label.text = "${:.2f}".format(cost) if cost else "$0"
+    def _apply(self, pct: float, resets_in_min):
+        pct = max(0.0, min(100.0, pct or 0.0))
         self.pct_label.text = "{:.0f}%".format(pct)
         self.bar_palette[1] = bar_color_for_pct(pct)
         self._fill_bar(pct)
+        self.reset_label.text = format_countdown(resets_in_min)
 
     def _fill_bar(self, pct):
         fill_w = int(self.BAR_WIDTH * pct / 100)
         for x in range(self.BAR_WIDTH):
-            value = 1 if x < fill_w else 0
+            v = 1 if x < fill_w else 0
             for y in range(self.BAR_HEIGHT):
-                self.bar_bitmap[x, y] = value
+                self.bar_bitmap[x, y] = v
 
     def has_hero(self):
-        return False
+        return True
 
     def has_corner(self):
         return True
+
+    def set_hero_frame(self, idx):
+        self.hero[0] = idx
 
     def set_corner_frame(self, idx):
         self.corner[0] = idx
 
 
-class WeekScreen:
-    SPARK_X = 2
-    SPARK_Y = 10
-    SPARK_WIDTH = WIDTH - 4
-    SPARK_HEIGHT = 10
-    STACK_X = 2
-    STACK_Y = 22
-    STACK_WIDTH = WIDTH - 4
-    STACK_HEIGHT = 3
+class SessionScreen(_LimitScreen):
+    """5-hour rolling window: % used + countdown to reset."""
 
     def __init__(self):
-        self.group = displayio.Group()
-        self.corner = make_corner(x=CORNER_X, y=0)
-        self.title = label.Label(terminalio.FONT, text="WK", color=PALETTE["cream"], x=2, y=4)
-        self.total_label = label.Label(terminalio.FONT, text="", color=PALETTE["copper"], x=18, y=4)
-        self.split_label = label.Label(terminalio.FONT, text="", color=PALETTE["cream"], x=2, y=29)
+        super().__init__("SESS")
 
-        self.spark_group = displayio.Group()
-        self.stack_group = displayio.Group()
+    def update_data(self, snapshot):
+        sess = (snapshot or {}).get("session") or {}
+        self._apply(sess.get("window_pct"), sess.get("resets_in_min"))
 
-        self.group.append(self.corner)
-        self.group.append(self.title)
-        self.group.append(self.total_label)
-        self.group.append(self.spark_group)
-        self.group.append(self.stack_group)
-        self.group.append(self.split_label)
+
+class WeekLimitScreen(_LimitScreen):
+    """Weekly limit: % used + countdown to next Friday reset."""
+
+    def __init__(self):
+        super().__init__("WEEK")
 
     def update_data(self, snapshot):
         week = (snapshot or {}).get("week") or {}
-        total = week.get("total") or 0
-        days = week.get("days") or [0] * 7
-        opus_pct = week.get("opus_pct") or 0
-        sonnet_pct = week.get("sonnet_pct") or 0
-
-        self.total_label.text = format_tokens(total)
-        self.split_label.text = "O{:.0f} S{:.0f}".format(opus_pct, sonnet_pct)
-        self._rebuild_sparkline(days)
-        self._rebuild_stacked_bar(opus_pct, sonnet_pct)
-
-    def _rebuild_sparkline(self, days):
-        while len(self.spark_group):
-            self.spark_group.pop()
-        n = max(1, len(days))
-        bar_w = max(1, (self.SPARK_WIDTH - (n - 1)) // n)
-        step = bar_w + 1
-        max_val = max(days) if any(d > 0 for d in days) else 1
-        for i, val in enumerate(days):
-            h = max(1, int(self.SPARK_HEIGHT * val / max_val)) if val > 0 else 1
-            color = PALETTE["amber"] if val > 0 else PALETTE["dim"]
-            rect = _solid_rect(bar_w, h, color)
-            rect.x = self.SPARK_X + i * step
-            rect.y = self.SPARK_Y + self.SPARK_HEIGHT - h
-            self.spark_group.append(rect)
-
-    def _rebuild_stacked_bar(self, opus_pct, sonnet_pct):
-        while len(self.stack_group):
-            self.stack_group.pop()
-        total = (opus_pct or 0) + (sonnet_pct or 0)
-        if total <= 0:
-            bg = _solid_rect(self.STACK_WIDTH, self.STACK_HEIGHT, PALETTE["dim"])
-            bg.x = self.STACK_X
-            bg.y = self.STACK_Y
-            self.stack_group.append(bg)
-            return
-        opus_w = int(self.STACK_WIDTH * opus_pct / total)
-        sonnet_w = self.STACK_WIDTH - opus_w
-        if opus_w > 0:
-            tile = _solid_rect(opus_w, self.STACK_HEIGHT, PALETTE["copper"])
-            tile.x = self.STACK_X
-            tile.y = self.STACK_Y
-            self.stack_group.append(tile)
-        if sonnet_w > 0:
-            tile = _solid_rect(sonnet_w, self.STACK_HEIGHT, PALETTE["amber"])
-            tile.x = self.STACK_X + opus_w
-            tile.y = self.STACK_Y
-            self.stack_group.append(tile)
-
-    def has_hero(self):
-        return False
-
-    def has_corner(self):
-        return True
-
-    def set_corner_frame(self, idx):
-        self.corner[0] = idx
-
-
-def _solid_rect(width, height, color):
-    bitmap = displayio.Bitmap(max(1, width), max(1, height), 1)
-    palette = displayio.Palette(1)
-    palette[0] = color
-    return displayio.TileGrid(bitmap, pixel_shader=palette)
+        self._apply(week.get("window_pct"), week.get("resets_in_min"))

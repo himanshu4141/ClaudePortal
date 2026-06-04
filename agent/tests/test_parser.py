@@ -89,3 +89,45 @@ def test_parse_all_walks_tree_and_decodes_project_path(tmp_path: Path):
     assert events[0].session_id == "abc-uuid"
     assert events[0].project_path == "/tmp/proj"
     assert events[0].total_tokens == 3
+
+
+def test_parse_deduplicates_same_message_id(tmp_path: Path):
+    # Claude Code writes the same API response 2-5× to the JSONL with the same message.id.
+    # Only the first occurrence should be counted.
+    proj_dir = tmp_path / "-tmp-proj"
+    proj_dir.mkdir()
+    session_file = proj_dir / "abc-uuid.jsonl"
+    line = (
+        '{"type":"assistant","timestamp":"2026-05-14T12:00:00Z",'
+        '"message":{"id":"msg_abc","model":"claude-sonnet-4-6",'
+        '"usage":{"input_tokens":100,"output_tokens":200,"cache_creation_input_tokens":50}}}\n'
+    )
+    session_file.write_text(line * 4)  # same message written 4 times
+
+    events = list(parse_file(session_file))
+    assert len(events) == 1
+    assert events[0].input_tokens == 100
+    assert events[0].output_tokens == 200
+    assert events[0].cache_creation_tokens == 50
+
+
+def test_parse_counts_distinct_message_ids_separately(tmp_path: Path):
+    proj_dir = tmp_path / "-tmp-proj"
+    proj_dir.mkdir()
+    session_file = proj_dir / "abc-uuid.jsonl"
+    line_a = (
+        '{"type":"assistant","timestamp":"2026-05-14T12:00:00Z",'
+        '"message":{"id":"msg_aaa","model":"claude-sonnet-4-6",'
+        '"usage":{"input_tokens":100,"output_tokens":0,"cache_creation_input_tokens":0}}}\n'
+    )
+    line_b = (
+        '{"type":"assistant","timestamp":"2026-05-14T12:01:00Z",'
+        '"message":{"id":"msg_bbb","model":"claude-sonnet-4-6",'
+        '"usage":{"input_tokens":200,"output_tokens":0,"cache_creation_input_tokens":0}}}\n'
+    )
+    # msg_aaa appears 3 times, msg_bbb appears 2 times — only 2 unique events
+    session_file.write_text(line_a * 3 + line_b * 2)
+
+    events = list(parse_file(session_file))
+    assert len(events) == 2
+    assert sum(e.input_tokens for e in events) == 300  # 100 + 200, not 700

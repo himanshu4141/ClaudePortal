@@ -14,8 +14,8 @@ def base_state_for(snapshot):
     if not snapshot:
         return mascot.HERO_IDLE
     now = snapshot.get("now") or {}
-    today = snapshot.get("today") or {}
-    if (today.get("window_pct") or 0) >= 85:
+    session = snapshot.get("session") or {}
+    if (session.get("window_pct") or 0) >= 85:
         return mascot.HERO_SWEAT
     if now.get("active"):
         if (now.get("rate") or 0) > 0:
@@ -40,9 +40,9 @@ class MoodController:
     def update_snapshot(self, snapshot):
         self._base_state = base_state_for(snapshot)
         if snapshot is not None:
-            today_tokens = (snapshot.get("today") or {}).get("tokens") or 0
-            crossed = _milestone_crossed(self._last_milestone_value, today_tokens)
-            self._last_milestone_value = today_tokens
+            week_total = (snapshot.get("week") or {}).get("total") or 0
+            crossed = _milestone_crossed(self._last_milestone_value, week_total)
+            self._last_milestone_value = week_total
             if crossed:
                 self._trigger_happy()
 
