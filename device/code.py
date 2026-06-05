@@ -18,6 +18,7 @@ PORT = 1883
 FEED = "{}/feeds/claude-portal.snapshot".format(secrets["aio_username"])
 RETRY_BASE_SECONDS = 5
 RETRY_MAX_SECONDS = 60
+LOOP_TIMEOUT = 0.1   # mqtt poll + render cadence (~10 fps); also the socket timeout
 
 # Matrix Portal M4: ESP32 co-processor wired to SAMD51 over SPI (AirLift)
 _esp32_cs = digitalio.DigitalInOut(board.ESP_CS)
@@ -53,6 +54,10 @@ def make_mqtt_client(pool):
         password=secrets["aio_key"],
         socket_pool=pool,
         keep_alive=30,
+        # Short socket timeout so loop() returns quickly when no message is
+        # waiting, letting the pet animate ~10 fps. minimqtt requires the
+        # loop() timeout to be >= this value (see LOOP_TIMEOUT below).
+        socket_timeout=LOOP_TIMEOUT,
     )
     client.on_connect = _on_connect
     client.on_disconnect = _on_disconnect
@@ -117,7 +122,7 @@ def run():
             retry_delay = RETRY_BASE_SECONDS
             while True:
                 # short poll so the pet animates smoothly (~10 fps) between msgs
-                mqtt_client.loop(timeout=0.1)
+                mqtt_client.loop(timeout=LOOP_TIMEOUT)
                 rotator.tick()
                 controller.tick()
         except Exception as exc:  # noqa: BLE001 - top-level guard so the board never wedges
