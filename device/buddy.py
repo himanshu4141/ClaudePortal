@@ -62,26 +62,36 @@ class BuddyEngine:
         self.group = displayio.Group()
         self.group.append(self.tile)
         self._pet = None
+        self._x0 = {}   # state -> fixed left origin (px), computed per pet
 
     def set_pet(self, pet):
         """Swap the active pet module (exposes NAME, BODY, STATES)."""
         self._pet = pet
         self.palette[BODY] = pet.BODY
+        # Anchor each state's origin ONCE, from that state's widest pose, so the
+        # body stays put across animation beats. (The .cpp port strips trailing
+        # spaces, so per-beat width varies +/-1 col; recentering per beat would
+        # make the pet jitter horizontally.) Clamp so wide poses don't clip.
+        self._x0 = {}
+        for name, st in pet.STATES.items():
+            cols = max(max(len(line) for line in pose) for pose in st["poses"])
+            x = (PANEL_W - cols * glyphs.GLYPH_W) // 2
+            self._x0[name] = x if x > 0 else 0
 
     def render(self, state, now):
         if self._pet is None:
             return
         pose_state = _POSE_STATE.get(state, state)
-        st = self._pet.STATES.get(pose_state) or self._pet.STATES["idle"]
+        if pose_state not in self._pet.STATES:
+            pose_state = "idle"
+        st = self._pet.STATES[pose_state]
         t = int(now * FRAMES_PER_SEC)
         seq = st["seq"]
         beat = (t // st["div"]) % len(seq)
         pose = st["poses"][seq[beat]]
 
         self.bitmap.fill(0)
-        cols = max(len(line) for line in pose)
-        x0 = (PANEL_W - cols * glyphs.GLYPH_W) // 2
-        glyphs.blit_frame(self.bitmap, pose, BODY, x0, 0)
+        glyphs.blit_frame(self.bitmap, pose, BODY, self._x0[pose_state], 0)
         self._effects(state, t)
 
     def draw_bars(self, session_pct, energy):
