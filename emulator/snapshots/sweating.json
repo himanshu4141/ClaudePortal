@@ -3,20 +3,28 @@
   "now": {
     "active": true,
     "model": "claude-opus-4-7",
-    "tokens": 988200,
-    "duration_min": 247,
     "rate": 2410.0
   },
-  "today": {
-    "tokens": 4_180_000,
-    "cost": 31.48,
-    "window_pct": 92.5
+  "session": {
+    "window_pct": 92.5,
+    "window_tokens": 1850000,
+    "resets_in_min": 13,
+    "tok": {
+      "in": 380000,
+      "out": 980000,
+      "cw": 290000,
+      "cr": 200000
+    }
   },
   "week": {
-    "total": 22_800_000,
-    "days": [800000, 1600000, 2200000, 3100000, 4400000, 6200000, 4500000],
-    "labels": ["F", "S", "S", "M", "T", "W", "T"],
-    "opus_pct": 68.0,
-    "sonnet_pct": 32.0
+    "window_pct": 88.0,
+    "resets_in_min": 1620,
+    "total": 22800000,
+    "tok": {
+      "in": 5200000,
+      "out": 12100000,
+      "cw": 3000000,
+      "cr": 2500000
+    }
   }
 }

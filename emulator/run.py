@@ -52,7 +52,7 @@ def main() -> int:
     use_mqtt = args.mqtt or args.snapshot is None
 
     matrix_display = display.make_display()
-    panels = [screens.NowScreen(), screens.TodayScreen(), screens.WeekScreen()]
+    panels = [screens.SessionScreen(), screens.WeekLimitScreen()]
     rotator = display.ScreenRotator(matrix_display, panels, waiting_screen=screens.WaitingScreen())
     mood = moods.MoodController(rotator.current_index, panels)
 

@@ -34,9 +34,8 @@ def main() -> int:
     matrix_display = display.make_display()
     panels = [
         ("waiting", screens.WaitingScreen()),
-        ("now", screens.NowScreen()),
-        ("today", screens.TodayScreen()),
-        ("week", screens.WeekScreen()),
+        ("session", screens.SessionScreen()),
+        ("week", screens.WeekLimitScreen()),
     ]
     mood = moods.MoodController(lambda: 0, [p for _, p in panels[1:]])
 
