@@ -40,6 +40,7 @@ device/CIRCUITPY/
 
 # Emulator generated output
 emulator/tests/out/
+emulator/out/
 
 # Worktrees created by EnterWorktree
 .claude/worktrees/

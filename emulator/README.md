@@ -1,14 +1,18 @@
 # emulator
 
 Run the ClaudePortal device firmware on your laptop. The actual `device/`
-modules — `display.py`, `screens.py`, `mascot.py`, `moods.py`, `formatting.py` —
-import unchanged through a thin set of host-side shims for the CircuitPython
-modules they depend on (`wifi`, `socketpool`, `displayio`, `terminalio`,
-`adafruit_minimqtt`, `adafruit_matrixportal`, `adafruit_display_text`).
+modules — `display.py`, `screens.py`, `buddy.py`, `buddy_controller.py`,
+`buddy_state.py`, `glyphs.py`, `inputs.py`, `mascot.py`, `formatting.py`, and
+the `pets/` pack — import unchanged through a thin set of host-side shims for
+the CircuitPython modules they depend on (`wifi`, `socketpool`, `displayio`,
+`terminalio`, `board`, `digitalio`, `busio`, `microcontroller`,
+`adafruit_minimqtt`, `adafruit_matrixportal`, `adafruit_display_text`,
+`adafruit_lis3dh`).
 
 A Tk window displays the emulated 64×32 panel scaled up so you can see pixels.
 Use it to validate the agent → MQTT → device path end-to-end before plugging
-into hardware.
+into hardware. For a quick headless look at every pet/state with no Tk or
+credentials, use [`contact_sheet.py`](#contact-sheets-headless) instead.
 
 ## Install
 
@@ -64,16 +68,41 @@ pip install -r requirements.txt
 
 ## Offline mode (no MQTT)
 
-Render a fixed snapshot from `snapshots/` and let the mascot animate on top
-of it. No credentials needed.
+Render a fixed snapshot from `snapshots/` and let the pet animate on top of it.
+No credentials needed.
 
 ```bash
 python run.py --snapshot snapshots/active_session.json
 python run.py --snapshot snapshots/sweating.json
 ```
 
-The mascot still ticks (random blinks, mood derived from the snapshot), so
-even a static snapshot shows the animation behavior.
+The pet still ticks (its state machine derives idle/busy/attention from the
+snapshot, and the animation beats keep running), so even a static snapshot
+shows the animation behaviour. The screens still rotate (buddy → week).
+
+To exercise the shake / face-down paths the input shims normally hold flat,
+force them via env vars:
+
+```bash
+EMU_SHAKE=1     python run.py --snapshot snapshots/active_session.json   # dizzy
+EMU_FACE_DOWN=1 python run.py --snapshot snapshots/active_session.json   # nap
+```
+
+## Contact sheets (headless)
+
+`contact_sheet.py` drives the real `buddy.py` render engine against the shim
+and lays many animation frames out in a grid — no Tk, no PIL, no credentials,
+no venv required. Useful for spotting jitter, clipping, or off-center art at a
+glance, and for reviewing the pets without staring at a 64×32 window.
+
+```bash
+python3 emulator/contact_sheet.py            # cat states + all pets idle
+python3 emulator/contact_sheet.py axolotl    # pick the pet for the states sheet
+```
+
+Output lands in `emulator/out/`:
+`sheet_states_<pet>.png` (rows = the 7 states, cols = frames over time) and
+`sheet_pets_idle.png` (rows = all pets idle, cols = frames).
 
 ## Live mode (subscribe to Adafruit IO)
 
@@ -85,7 +114,8 @@ python run.py --mqtt
 ```
 
 The window stays on the waiting splash until the agent publishes a snapshot.
-After that, screens rotate every 5 s and the mascot reacts to live data.
+After that, the pet reacts to live data and the screens rotate (the pet dwells
+longest; the week screen cycles in periodically).
 
 ## How it works
 
@@ -95,6 +125,11 @@ emulator/
     wifi.py                      pretend-connected radio
     socketpool.py                no-op pool (the MQTT shim doesn't need it)
     terminalio.py                FONT sentinel
+    board.py                     Matrix Portal M4 pin sentinels
+    digitalio.py                 DigitalInOut (buttons idle unpressed)
+    busio.py                     I2C / SPI no-op handles
+    microcontroller.py           nvm bytearray (pet-selection persistence)
+    adafruit_lis3dh.py           accelerometer: flat + unshaken (env-overridable)
     displayio.py                 Group / Bitmap / Palette / TileGrid /
                                  OnDiskBitmap (parses our 1-bpp BMP sprites)
     adafruit_display_text/       Label class (text + xy + color)
@@ -102,14 +137,18 @@ emulator/
     adafruit_minimqtt/           paho-mqtt wrapper with the device API
   renderer.py                    walks the displayio tree -> 64x32 PIL image
   viewer.py                      Tk window @ ~12x pixel scale
-  run.py                         entrypoint: sys.path setup + main loop
+  run.py                         live entrypoint: sys.path setup + main loop
+  contact_sheet.py               headless PNG grid of every pet/state (no Tk/PIL)
+  tests/smoke.py                 headless pipeline check -> out/*.png
   snapshots/                     example payloads matching the publisher
 ```
 
 `run.py` puts `emulator/shim/` first on `sys.path`, then `emulator/`, then
-`device/`. When the device modules do `import wifi` etc. they find the shims
-instead of failing on missing CircuitPython modules. Everything else (logic,
-sprite loading, mood state machine) is the real device code.
+`device/`. When the device modules do `import board` / `import displayio` /
+`import adafruit_lis3dh` etc. they find the shims instead of failing on missing
+CircuitPython modules. Everything else (the buddy state machine, pet render
+engine, sprite loading, screen rotation) is the real device code — the same
+`BuddyController` loop that runs on the panel.
 
 ## Limitations
 
@@ -129,9 +168,8 @@ sprite loading, mood state machine) is the real device code.
 - **`ModuleNotFoundError: display` etc.** — run from inside `emulator/` so
   `run.py` can locate the `device/` directory at `../device/`.
 - **`_tkinter.TclError: no display name`** — Tk needs a display. On a
-  headless box, use `--snapshot ...` and edit `run.py` to call
-  `img.save(...)` instead of `viewer.update_image(...)` (or run under XQuartz
-  / WSLg).
+  headless box, use `contact_sheet.py` (writes PNGs, no Tk) or
+  `tests/smoke.py`, or run the live viewer under XQuartz / WSLg.
 - **`ModuleNotFoundError: No module named '_tkinter'`** — your Python was
   built without Tk. See [Python + Tk on macOS](#python--tk-on-macos).
 - **Process crashes immediately with `macOS 26 (2603) or later required`**

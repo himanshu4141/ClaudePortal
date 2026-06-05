@@ -1,13 +1,17 @@
 """Run the ClaudePortal device firmware on the host with a Tk viewer.
 
 Two modes:
-  --snapshot path/to/snap.json   render a single static snapshot (no MQTT)
+  --snapshot path/to/snap.json   render a single static snapshot (no MQTT); the
+                                  pet still animates and the screens still rotate
   --mqtt                          subscribe to Adafruit IO and render live
                                   updates (default if --snapshot is omitted)
 
-The device modules under ../device run unchanged. We just put the shim
-package directory first on sys.path so `import wifi`, `import displayio`,
-etc. find the host-side stand-ins instead of failing.
+The device modules under ../device run unchanged. We put the shim package
+directory first on sys.path so `import board`, `import displayio`, `import
+adafruit_lis3dh`, etc. find the host-side stand-ins instead of failing. The
+buddy's BuddyController (shake / face-down / buttons) runs too: the input
+shims report a flat, unshaken board, so the pet follows the snapshot state.
+Set EMU_SHAKE=1 / EMU_FACE_DOWN=1 to force the dizzy / nap paths.
 """
 from __future__ import annotations
 
@@ -32,8 +36,8 @@ load_dotenv(HERE / ".env")
 load_dotenv(REPO / "agent" / ".env")
 
 import display  # noqa: E402  (from device/display.py via sys.path)
-import moods  # noqa: E402
 import screens  # noqa: E402
+from buddy_controller import BuddyController  # noqa: E402
 
 from renderer import render  # noqa: E402
 from viewer import Viewer  # noqa: E402
@@ -52,15 +56,16 @@ def main() -> int:
     use_mqtt = args.mqtt or args.snapshot is None
 
     matrix_display = display.make_display()
-    panels = [screens.SessionScreen(), screens.WeekLimitScreen()]
+    buddy_screen = screens.BuddyScreen()
+    panels = [buddy_screen, screens.WeekLimitScreen()]
     rotator = display.ScreenRotator(matrix_display, panels, waiting_screen=screens.WaitingScreen())
-    mood = moods.MoodController(rotator.current_index, panels)
+    controller = BuddyController(buddy_screen)
 
     if args.snapshot is not None:
         with args.snapshot.open() as fh:
             snap = json.load(fh)
         rotator.update_snapshot(snap)
-        mood.update_snapshot(snap)
+        controller.update_snapshot(snap)
 
     if use_mqtt:
         creds = _load_credentials()
@@ -73,7 +78,7 @@ def main() -> int:
             return 2
         threading.Thread(
             target=_mqtt_thread,
-            args=(creds, rotator, mood),
+            args=(creds, rotator, controller),
             daemon=True,
         ).start()
 
@@ -84,7 +89,7 @@ def main() -> int:
     try:
         while viewer.alive():
             rotator.tick()
-            mood.tick()
+            controller.tick()
             now = time.monotonic()
             if now - last_render >= frame_interval:
                 viewer.update_image(render(matrix_display.root_group))
@@ -104,7 +109,7 @@ def _load_credentials() -> dict | None:
     return {"username": username, "key": key}
 
 
-def _mqtt_thread(creds: dict, rotator, mood) -> None:
+def _mqtt_thread(creds: dict, rotator, controller) -> None:
     import ssl
 
     import adafruit_minimqtt.adafruit_minimqtt as MQTT
@@ -134,7 +139,7 @@ def _mqtt_thread(creds: dict, rotator, mood) -> None:
             print("emulator mqtt: parse failed: {}".format(exc))
             return
         rotator.update_snapshot(snap)
-        mood.update_snapshot(snap)
+        controller.update_snapshot(snap)
 
     client.on_connect = _on_connect
     client.on_message = _on_message

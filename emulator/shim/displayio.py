@@ -42,6 +42,10 @@ class Bitmap:
         self.value_count = value_count
         self._data = [0] * (width * height)
 
+    def fill(self, value: int) -> None:
+        for i in range(len(self._data)):
+            self._data[i] = value
+
     def __setitem__(self, key, value):
         x, y = _xy(key, self.width)
         self._data[y * self.width + x] = value
