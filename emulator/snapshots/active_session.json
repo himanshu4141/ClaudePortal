@@ -1,0 +1,30 @@
+{
+  "ts": "2026-05-15T12:00:00+00:00",
+  "now": {
+    "active": true,
+    "model": "claude-sonnet-4-6",
+    "rate": 1234.5
+  },
+  "session": {
+    "window_pct": 62.0,
+    "window_tokens": 620000,
+    "resets_in_min": 137,
+    "tok": {
+      "in": 120000,
+      "out": 350000,
+      "cw": 80000,
+      "cr": 70000
+    }
+  },
+  "week": {
+    "window_pct": 41.0,
+    "resets_in_min": 4320,
+    "total": 7800000,
+    "tok": {
+      "in": 1800000,
+      "out": 4200000,
+      "cw": 900000,
+      "cr": 900000
+    }
+  }
+}

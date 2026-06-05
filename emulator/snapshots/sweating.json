@@ -1,0 +1,30 @@
+{
+  "ts": "2026-05-15T16:30:00+00:00",
+  "now": {
+    "active": true,
+    "model": "claude-opus-4-7",
+    "rate": 2410.0
+  },
+  "session": {
+    "window_pct": 92.5,
+    "window_tokens": 1850000,
+    "resets_in_min": 13,
+    "tok": {
+      "in": 380000,
+      "out": 980000,
+      "cw": 290000,
+      "cr": 200000
+    }
+  },
+  "week": {
+    "window_pct": 88.0,
+    "resets_in_min": 1620,
+    "total": 22800000,
+    "tok": {
+      "in": 5200000,
+      "out": 12100000,
+      "cw": 3000000,
+      "cr": 2500000
+    }
+  }
+}
