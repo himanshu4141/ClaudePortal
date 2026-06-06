@@ -80,6 +80,14 @@ The pet still ticks (its state machine derives idle/busy/attention from the
 snapshot, and the animation beats keep running), so even a static snapshot
 shows the animation behaviour. The screens still rotate (buddy → week).
 
+**Switching pets.** On the panel this is the UP/DOWN buttons; in the viewer use
+the **arrow keys** (Up/Right = next, Down/Left = previous) to cycle live, or
+pick the starting pet with `--pet`:
+
+```bash
+python run.py --snapshot snapshots/active_session.json --pet axolotl
+```
+
 To exercise the shake / face-down paths the input shims normally hold flat,
 force them via env vars:
 

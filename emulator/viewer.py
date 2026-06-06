@@ -26,7 +26,22 @@ class Viewer:
         self.canvas.pack()
         self._image_id: int | None = None
         self._photo: ImageTk.PhotoImage | None = None
+        self._pet_delta = 0
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Arrow keys cycle the pet (stands in for the panel's UP/DOWN buttons).
+        for key in ("<Up>", "<Right>"):
+            self.root.bind(key, lambda _e: self._nudge_pet(1))
+        for key in ("<Down>", "<Left>"):
+            self.root.bind(key, lambda _e: self._nudge_pet(-1))
+
+    def _nudge_pet(self, delta: int) -> None:
+        self._pet_delta += delta
+
+    def consume_pet_delta(self) -> int:
+        """Return the net pet-cycle requested since last call, then reset."""
+        delta = self._pet_delta
+        self._pet_delta = 0
+        return delta
 
     def _on_close(self) -> None:
         self._alive = False

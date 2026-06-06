@@ -36,6 +36,7 @@ load_dotenv(HERE / ".env")
 load_dotenv(REPO / "agent" / ".env")
 
 import display  # noqa: E402  (from device/display.py via sys.path)
+import pets  # noqa: E402
 import screens  # noqa: E402
 from buddy_controller import BuddyController  # noqa: E402
 
@@ -45,12 +46,27 @@ from viewer import Viewer  # noqa: E402
 FEED_TEMPLATE = "{username}/feeds/claude-portal.snapshot"
 
 
+def _set_pet(controller, name):
+    """Point the controller's pet selector at a pet by name (emulator helper)."""
+    if name not in pets.REGISTRY:
+        print("emulator: unknown pet {!r}; choices: {}".format(
+            name, ", ".join(pets.REGISTRY)), file=sys.stderr)
+        return
+    controller.selector.index = pets.REGISTRY.index(name)
+    controller.screen.engine.set_pet(controller.selector.load_module())
+    print("buddy: pet -> {}".format(controller.selector.name()))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--snapshot", type=Path, help="Render a single snapshot JSON and stay there.")
     parser.add_argument("--mqtt", action="store_true", help="Subscribe to Adafruit IO and render live.")
     parser.add_argument("--scale", type=int, default=12, help="Pixel scale factor for the viewer.")
     parser.add_argument("--fps", type=int, default=30, help="Viewer refresh rate.")
+    parser.add_argument(
+        "--pet", choices=pets.REGISTRY,
+        help="Start on this pet (default: cat). Arrow keys cycle pets live.",
+    )
     args = parser.parse_args()
 
     use_mqtt = args.mqtt or args.snapshot is None
@@ -60,6 +76,9 @@ def main() -> int:
     panels = [buddy_screen, screens.WeekLimitScreen()]
     rotator = display.ScreenRotator(matrix_display, panels, waiting_screen=screens.WaitingScreen())
     controller = BuddyController(buddy_screen)
+
+    if args.pet is not None:
+        _set_pet(controller, args.pet)
 
     if args.snapshot is not None:
         with args.snapshot.open() as fh:
@@ -88,6 +107,11 @@ def main() -> int:
 
     try:
         while viewer.alive():
+            delta = viewer.consume_pet_delta()
+            if delta:
+                controller.selector.nudge(delta)
+                controller.screen.engine.set_pet(controller.selector.load_module())
+                print("buddy: pet -> {}".format(controller.selector.name()))
             rotator.tick()
             controller.tick()
             now = time.monotonic()
