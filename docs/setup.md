@@ -59,32 +59,45 @@ From the `lib/` folder of the bundle, copy these to `CIRCUITPY/lib/`:
 | `adafruit_matrixportal/` | folder | RGB matrix display driver |
 | `adafruit_portalbase/` | folder | required by adafruit_matrixportal |
 | `adafruit_minimqtt/` | folder | MQTT client for Adafruit IO |
-| `adafruit_display_text/` | folder | label widgets used by all screens |
+| `adafruit_display_text/` | folder | label widgets used by the WEEK / waiting screens |
+| `adafruit_lis3dh.mpy` | file | onboard accelerometer — shake → dizzy, face-down → nap |
 | `adafruit_connection_manager.mpy` | file | socket manager required by minimqtt |
 | `adafruit_ticks.mpy` | file | required by adafruit_minimqtt |
 | `adafruit_requests.mpy` | file | required by adafruit_portalbase |
 
-> **Not needed:** `adafruit_io/` and `adafruit_bitmap_font/` — the device
-> speaks MQTT directly and uses the built-in `terminalio.FONT`.
+> **Not needed:** `adafruit_io/` and `adafruit_bitmap_font/` — the device speaks
+> MQTT directly, and the pet renders through a hand-rolled pixel font
+> (`device/glyphs.py`), so no font asset or font library is required.
 
 The easiest way to install (with the board mounted as `CIRCUITPY`) is
 [`circup`](https://github.com/adafruit/circup):
 
 ```bash
 circup install adafruit_esp32spi adafruit_matrixportal adafruit_minimqtt \
-               adafruit_display_text adafruit_connection_manager
+               adafruit_display_text adafruit_connection_manager adafruit_lis3dh
 ```
 
 ## 5. Device files
 
-Copy the firmware to `CIRCUITPY` (see `device/README.md` for the full list):
+Copy the firmware to `CIRCUITPY` (see `device/README.md` for the annotated list):
 
 ```bash
+# core + screens
 cp device/code.py device/display.py device/screens.py \
-   device/formatting.py device/mascot.py device/moods.py /Volumes/CIRCUITPY/
-cp device/secrets.py.example /Volumes/CIRCUITPY/secrets.py   # then edit it
+   device/formatting.py device/mascot.py /Volumes/CIRCUITPY/
+# buddy: render engine, state machine, font, inputs, pinned snapshot contract
+cp device/buddy.py device/buddy_controller.py device/buddy_state.py \
+   device/glyphs.py device/inputs.py device/snapshot_schema.py /Volumes/CIRCUITPY/
+# pet character data (one resident at a time; cheap on disk)
+cp -r device/pets /Volumes/CIRCUITPY/pets
+# the WEEK screen still uses the BMP mascot eye
 cp -r device/sprites /Volumes/CIRCUITPY/sprites
+cp device/secrets.py.example /Volumes/CIRCUITPY/secrets.py   # then edit it
 ```
+
+> `mascot.py` + `sprites/` are kept only for the corner eye on the WEEK screen;
+> the pet itself needs no sprite files. `device/moods.py` was removed (replaced
+> by `buddy_state.py` + `buddy_controller.py`).
 
 ## 6. Wi-Fi + Adafruit IO credentials
 
@@ -149,4 +162,20 @@ If you see this loop more than 2–3 times, power-cycle the board.
 **MQTT connects but messages never arrive**
 The device subscribes to `<username>/feeds/claude-portal.snapshot`. Confirm
 the agent is running (`python -m claude_portal` in `agent/`) and check
-Adafruit IO's feed page to see if payloads are arriving there first.
+Adafruit IO's feed page to see if payloads are arriving there first. To exercise
+the panel without real Claude usage, publish canned states with
+`tools/mock_publish.py` (cycles idle → busy → attention → celebrate).
+
+**Pet always sleeps**
+Sleep means no snapshot has arrived within ~90s — the agent is offline or MQTT
+isn't flowing (see above). On boot, before the first message, sleeping is normal.
+
+**Shake / face-down do nothing**
+The serial console prints `inputs: LIS3DH unavailable …` if the accelerometer
+didn't initialize — check that `adafruit_lis3dh` is installed. If it works but
+feels too sensitive or too stiff, tune `_SHAKE_THRESHOLD` (shake) and
+`_FACE_DOWN_Z` (nap) at the top of `device/inputs.py`.
+
+**UP/DOWN don't switch the pet**
+The choice is saved to `microcontroller.nvm`; a serial line `buddy: pet -> …`
+confirms a press registered. Pet selection is the only thing the buttons do.

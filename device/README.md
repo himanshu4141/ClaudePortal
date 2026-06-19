@@ -1,8 +1,10 @@
 # device
 
 CircuitPython firmware for the Adafruit Matrix Portal M4. Subscribes to
-Adafruit IO MQTT and renders three rotating screens on the 64×32 LED matrix
-with a pixel-art Claude Code mascot.
+Adafruit IO MQTT and renders an animated **desk-pet buddy** on the 64×32 LED
+matrix, with the weekly-limit screen as a secondary view. Inspired by
+[claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy) —
+ported to this ambient LED panel, minus the BLE back-channel (no approve/deny).
 
 ## Install
 
@@ -12,29 +14,23 @@ with a pixel-art Claude Code mascot.
    [`circup`](https://github.com/adafruit/circup):
    ```bash
    circup install adafruit_esp32spi adafruit_minimqtt adafruit_connection_manager \
-                  adafruit_matrixportal adafruit_display_text
+                  adafruit_matrixportal adafruit_display_text adafruit_lis3dh
    ```
    > The Matrix Portal M4 uses `adafruit_esp32spi` for Wi-Fi — the native
    > `wifi`/`socketpool`/`ssl` modules are not available on this board in CP 9.x.
-3. Copy `secrets.py.example` to the board as `secrets.py` and fill in your
-   Wi-Fi credentials and Adafruit IO username + AIO key:
+   > `adafruit_lis3dh` drives the onboard accelerometer (shake / face-down).
+3. Copy `secrets.py.example` to the board as `secrets.py` and fill in Wi-Fi +
+   Adafruit IO credentials.
+4. Copy the firmware to the board:
    ```bash
-   cp secrets.py.example /Volumes/CIRCUITPY/secrets.py
-   # edit the values on the board
+   cp code.py display.py screens.py formatting.py /Volumes/CIRCUITPY/
+   cp buddy.py buddy_controller.py buddy_state.py glyphs.py inputs.py snapshot_schema.py /Volumes/CIRCUITPY/
+   cp mascot.py /Volumes/CIRCUITPY/                 # still used by the WEEK screen
+   cp -r pets /Volumes/CIRCUITPY/pets
    ```
-4. Copy `code.py` to the board:
-   ```bash
-   cp code.py /Volumes/CIRCUITPY/code.py
-   ```
-5. Copy the helper modules and the sprite directory:
-   ```bash
-   cp display.py screens.py formatting.py mascot.py moods.py /Volumes/CIRCUITPY/
-   cp -r sprites /Volumes/CIRCUITPY/sprites
-   ```
-   The `sprites/` folder ships the pre-built BMPs. To re-generate them after
-   editing the pixel grids, run `python3 sprites/build_sprites.py`.
-6. Open a serial console to watch the board (replace the path with your
-   actual device — `ls /dev/tty.usbmodem*` on macOS):
+   The pet character data in `pets/` is auto-generated — see
+   [`../docs/buddy.md`](../docs/buddy.md).
+5. Open a serial console (`ls /dev/tty.usbmodem*` on macOS):
    ```bash
    screen /dev/tty.usbmodem* 115200
    ```
@@ -42,40 +38,36 @@ with a pixel-art Claude Code mascot.
 ## What you'll see
 
 Until the first MQTT message arrives the panel shows a `claude / portal`
-waiting splash. Once the agent publishes a snapshot, the board rotates two
-screens every 5 seconds:
+waiting splash. Once the agent publishes a snapshot, a pixel pet animates as the
+primary screen (~20 s) and rotates with the **WEEK** limit screen (~6 s).
 
-- **SESS** — 5-hour session window: % used as a colour-coded bar (amber →
-  copper → pink as it fills), and the countdown until the window resets
-  (e.g. `4h 21m`)
-- **WEEK** — weekly limit: % used and time until the next configured reset
-  (e.g. `6d 14h` or `2h 30m` on reset day)
+The pet's state is derived entirely device-side from the snapshot + physical
+input — no back-channel:
 
-The hero mascot reacts to the latest snapshot each tick:
-
-| Signal | Hero shows |
+| Pet state | Trigger |
 |---|---|
-| No data yet | (waiting splash) |
-| `now.active=True` and `now.rate>0` | TYPING |
-| `now.active=True` and no rate | THINK |
-| `session.window_pct >= 85` | SWEAT |
-| Crossed a weekly token milestone (1M / 5M / 10M) | HAPPY for 5 s |
-| Otherwise | IDLE |
+| sleep | no snapshot within 90 s (agent offline) |
+| idle | `now.active == False` |
+| busy | `now.active == True` |
+| attention | `session.window_pct >= 85` (limit warning) |
+| celebrate | leveled up (every 250 K weekly tokens) |
+| dizzy | board **shaken** |
+| nap | board **face-down** (energy recharges) → **heart** on wake |
 
-The hero blinks randomly every 3–6 seconds; the corner mascot mirrors the
-blink and tracks eye direction while TYPING or THINKING.
+The bottom two rows are ambient bars: **session window %** (green→amber→red) and
+**energy**. Press **UP / DOWN** to cycle the pet — the choice persists in NVM.
 
-The serial console still prints the same one-line summaries from PR 5 for
-sanity-checking against the panel.
+If `code.py` raises, the top-level retry loop catches it, prints the error, and
+reconnects with exponential backoff (5 s → 10 s → … → 60 s).
 
-If `code.py` raises, the top-level retry loop catches it, prints the error,
-and reconnects with exponential backoff (5s → 10s → … → 60s).
+## Testing without hardware
 
-## Roadmap
+Host unit tests (pure-Python logic) run under pytest:
+```bash
+python3 -m pytest device/tests -q
+```
+To drive a real panel with canned states (no real Claude usage), see
+`tools/mock_publish.py`.
 
-- **PR 5** (this) — Wi-Fi + MQTT bootstrap, prints snapshot to serial
-- **PR 6** — 3-screen rotation (static text)
-- **PR 7** — Mascot sprites + corner logo
-- **PR 8** — Animations + mood state machine
-
-See the top-level [`README.md`](../README.md) for project context.
+See [`../docs/buddy.md`](../docs/buddy.md) for architecture and the pet-porting
+pipeline, and the top-level [`README.md`](../README.md) for project context.

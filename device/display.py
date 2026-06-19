@@ -33,7 +33,8 @@ class ScreenRotator:
     def tick(self):
         if self.snapshot is None:
             return
-        if time.monotonic() - self.last_switch >= ROTATE_INTERVAL_SECONDS:
+        dwell = getattr(self.screens[self.index], "dwell", ROTATE_INTERVAL_SECONDS)
+        if time.monotonic() - self.last_switch >= dwell:
             self.index = (self.index + 1) % len(self.screens)
             self.last_switch = time.monotonic()
             self.display.root_group = self.screens[self.index].group
